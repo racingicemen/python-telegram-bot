@@ -19,6 +19,10 @@
 """This module contains the classes that represent Telegram InlineQueryResultCachedSticker."""
 
 from telegram import InlineQueryResult
+from typing import Any, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from telegram import ReplyMarkup, InputMessageContent
 
 
 class InlineQueryResultCachedSticker(InlineQueryResult):
@@ -47,12 +51,14 @@ class InlineQueryResultCachedSticker(InlineQueryResult):
 
     """
 
-    def __init__(self,
-                 id,
-                 sticker_file_id,
-                 reply_markup=None,
-                 input_message_content=None,
-                 **kwargs):
+    def __init__(
+        self,
+        id: str,
+        sticker_file_id: str,
+        reply_markup: 'ReplyMarkup' = None,
+        input_message_content: 'InputMessageContent' = None,
+        **kwargs: Any,
+    ):
         # Required
         super().__init__('sticker', id)
         self.sticker_file_id = sticker_file_id

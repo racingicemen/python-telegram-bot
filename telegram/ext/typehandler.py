@@ -21,6 +21,14 @@
 from .handler import Handler
 
 
+from typing import Callable, TYPE_CHECKING, TypeVar, Type, Any
+
+if TYPE_CHECKING:
+    from telegram.ext import CallbackContext
+
+RT = TypeVar('RT')
+
+
 class TypeHandler(Handler):
     """Handler class to handle updates of custom types.
 
@@ -32,6 +40,11 @@ class TypeHandler(Handler):
             passed to the callback function.
         pass_job_queue (:obj:`bool`): Determines whether ``job_queue`` will be passed to
             the callback function.
+        run_async (:obj:`bool`): Determines whether the callback will run asynchronously.
+
+    Warning:
+        When setting ``run_async`` to :obj:`True`, you cannot rely on adding custom
+        attributes to :class:`telegram.ext.CallbackContext`. See its docs for more info.
 
     Args:
         type (:obj:`type`): The ``type`` of updates this handler should process, as
@@ -56,23 +69,30 @@ class TypeHandler(Handler):
             :class:`telegram.ext.JobQueue` instance created by the :class:`telegram.ext.Updater`
             which can be used to schedule new jobs. Default is :obj:`False`.
             DEPRECATED: Please switch to context based callbacks.
+        run_async (:obj:`bool`): Determines whether the callback will run asynchronously.
+            Defaults to :obj:`False`.
 
     """
 
-    def __init__(self,
-                 type,
-                 callback,
-                 strict=False,
-                 pass_update_queue=False,
-                 pass_job_queue=False):
+    def __init__(
+        self,
+        type: Type,
+        callback: Callable[[Any, 'CallbackContext'], RT],
+        strict: bool = False,
+        pass_update_queue: bool = False,
+        pass_job_queue: bool = False,
+        run_async: bool = False,
+    ):
         super().__init__(
             callback,
             pass_update_queue=pass_update_queue,
-            pass_job_queue=pass_job_queue)
+            pass_job_queue=pass_job_queue,
+            run_async=run_async,
+        )
         self.type = type
         self.strict = strict
 
-    def check_update(self, update):
+    def check_update(self, update: Any) -> bool:
         """Determines whether an update should be passed to this handlers :attr:`callback`.
 
         Args:

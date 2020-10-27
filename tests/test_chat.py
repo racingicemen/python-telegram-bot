@@ -19,18 +19,24 @@
 
 import pytest
 
-from telegram import Chat, ChatAction, ChatPermissions
-from telegram import User, Message
+from telegram import Chat, ChatAction, ChatPermissions, constants
+from telegram import User
 
 
 @pytest.fixture(scope='class')
 def chat(bot):
-    return Chat(TestChat.id_, TestChat.title, TestChat.type_, username=TestChat.username,
-                all_members_are_administrators=TestChat.all_members_are_administrators,
-                bot=bot, sticker_set_name=TestChat.sticker_set_name,
-                can_set_sticker_set=TestChat.can_set_sticker_set,
-                permissions=TestChat.permissions,
-                slow_mode_delay=TestChat.slow_mode_delay)
+    return Chat(
+        TestChat.id_,
+        TestChat.title,
+        TestChat.type_,
+        username=TestChat.username,
+        all_members_are_administrators=TestChat.all_members_are_administrators,
+        bot=bot,
+        sticker_set_name=TestChat.sticker_set_name,
+        can_set_sticker_set=TestChat.can_set_sticker_set,
+        permissions=TestChat.permissions,
+        slow_mode_delay=TestChat.slow_mode_delay,
+    )
 
 
 class TestChat:
@@ -58,7 +64,7 @@ class TestChat:
             'sticker_set_name': self.sticker_set_name,
             'can_set_sticker_set': self.can_set_sticker_set,
             'permissions': self.permissions.to_dict(),
-            'slow_mode_delay': self.slow_mode_delay
+            'slow_mode_delay': self.slow_mode_delay,
         }
         chat = Chat.de_json(json_dict, bot)
 
@@ -71,22 +77,6 @@ class TestChat:
         assert chat.can_set_sticker_set == self.can_set_sticker_set
         assert chat.permissions == self.permissions
         assert chat.slow_mode_delay == self.slow_mode_delay
-
-    def test_de_json_default_quote(self, bot):
-        json_dict = {
-            'id': self.id_,
-            'type': self.type_,
-            'pinned_message': Message(
-                message_id=123,
-                from_user=None,
-                date=None,
-                chat=None
-            ).to_dict(),
-            'default_quote': True
-        }
-        chat = Chat.de_json(json_dict, bot)
-
-        assert chat.pinned_message.default_quote is True
 
     def test_to_dict(self, chat):
         chat_dict = chat.to_dict()
@@ -104,6 +94,16 @@ class TestChat:
         assert chat.link == 'https://t.me/{}'.format(chat.username)
         chat.username = None
         assert chat.link is None
+
+    def test_anonymous_admin(self, chat):
+        assert chat.is_anonymous_admin is False
+        chat.id = constants.ANONYMOUS_ADMIN_ID
+        assert chat.is_anonymous_admin
+
+    def test_service_chat(self, chat):
+        assert chat.is_service_chat is False
+        chat.id = constants.SERVICE_CHAT_ID
+        assert chat.is_service_chat
 
     def test_send_action(self, monkeypatch, chat):
         def test(*args, **kwargs):

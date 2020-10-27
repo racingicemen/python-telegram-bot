@@ -24,11 +24,13 @@ from telegram import Location, Venue
 
 @pytest.fixture(scope='class')
 def venue():
-    return Venue(TestVenue.location,
-                 TestVenue.title,
-                 TestVenue.address,
-                 foursquare_id=TestVenue.foursquare_id,
-                 foursquare_type=TestVenue.foursquare_type)
+    return Venue(
+        TestVenue.location,
+        TestVenue.title,
+        TestVenue.address,
+        foursquare_id=TestVenue.foursquare_id,
+        foursquare_type=TestVenue.foursquare_type,
+    )
 
 
 class TestVenue:
@@ -44,7 +46,7 @@ class TestVenue:
             'title': TestVenue.title,
             'address': TestVenue.address,
             'foursquare_id': TestVenue.foursquare_id,
-            'foursquare_type': TestVenue.foursquare_type
+            'foursquare_type': TestVenue.foursquare_type,
         }
         venue = Venue.de_json(json_dict, bot)
 
@@ -55,15 +57,17 @@ class TestVenue:
         assert venue.foursquare_type == self.foursquare_type
 
     def test_send_with_venue(self, monkeypatch, bot, chat_id, venue):
-        def test(_, url, data, **kwargs):
-            return (data['longitude'] == self.location.longitude
-                    and data['latitude'] == self.location.latitude
-                    and data['title'] == self.title
-                    and data['address'] == self.address
-                    and data['foursquare_id'] == self.foursquare_id
-                    and data['foursquare_type'] == self.foursquare_type)
+        def test(url, data, **kwargs):
+            return (
+                data['longitude'] == self.location.longitude
+                and data['latitude'] == self.location.latitude
+                and data['title'] == self.title
+                and data['address'] == self.address
+                and data['foursquare_id'] == self.foursquare_id
+                and data['foursquare_type'] == self.foursquare_type
+            )
 
-        monkeypatch.setattr('telegram.utils.request.Request.post', test)
+        monkeypatch.setattr(bot.request, 'post', test)
         message = bot.send_venue(chat_id, venue=venue)
         assert message
 

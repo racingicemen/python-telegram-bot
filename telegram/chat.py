@@ -19,12 +19,21 @@
 # along with this program.  If not, see [http://www.gnu.org/licenses/].
 """This module contains an object that represents a Telegram Chat."""
 
-from telegram import TelegramObject, ChatPhoto
+from telegram import TelegramObject, ChatPhoto, constants
 from .chatpermissions import ChatPermissions
+
+from telegram.utils.types import JSONDict
+from typing import Any, Optional, List, TYPE_CHECKING, ClassVar
+
+if TYPE_CHECKING:
+    from telegram import Bot, Message, ChatMember
 
 
 class Chat(TelegramObject):
     """This object represents a chat.
+
+    Objects of this class are comparable in terms of equality. Two objects of this class are
+    considered equal, if their :attr:`id` is equal.
 
     Attributes:
         id (:obj:`int`): Unique identifier for this chat.
@@ -38,7 +47,7 @@ class Chat(TelegramObject):
         invite_link (:obj:`str`): Optional. Chat invite link, for supergroups and channel chats.
         pinned_message (:class:`telegram.Message`): Optional. Pinned message, for supergroups.
             Returned only in :meth:`telegram.Bot.get_chat`.
-        permissions (:class:`telegram.ChatPermission`): Optional. Default chat member permissions,
+        permissions (:class:`telegram.ChatPermissions`): Optional. Default chat member permissions,
             for groups and supergroups. Returned only in :meth:`telegram.Bot.get_chat`.
         slow_mode_delay (:obj:`int`): Optional. For supergroups, the minimum allowed delay between
             consecutive messages sent by each unprivileged user. Returned only in
@@ -69,7 +78,7 @@ class Chat(TelegramObject):
             in :meth:`telegram.Bot.get_chat`.
         pinned_message (:class:`telegram.Message`, optional): Pinned message, for groups,
             supergroups and channels. Returned only in :meth:`telegram.Bot.get_chat`.
-        permissions (:class:`telegram.ChatPermission`): Optional. Default chat member permissions,
+        permissions (:class:`telegram.ChatPermissions`): Optional. Default chat member permissions,
             for groups and supergroups. Returned only in :meth:`telegram.Bot.get_chat`.
         slow_mode_delay (:obj:`int`, optional): For supergroups, the minimum allowed delay between
             consecutive messages sent by each unprivileged user.
@@ -83,32 +92,34 @@ class Chat(TelegramObject):
 
     """
 
-    PRIVATE = 'private'
-    """:obj:`str`: 'private'"""
-    GROUP = 'group'
-    """:obj:`str`: 'group'"""
-    SUPERGROUP = 'supergroup'
-    """:obj:`str`: 'supergroup'"""
-    CHANNEL = 'channel'
-    """:obj:`str`: 'channel'"""
+    PRIVATE: ClassVar[str] = constants.CHAT_PRIVATE
+    """:const:`telegram.constants.CHAT_PRIVATE`"""
+    GROUP: ClassVar[str] = constants.CHAT_GROUP
+    """:const:`telegram.constants.CHAT_GROUP`"""
+    SUPERGROUP: ClassVar[str] = constants.CHAT_SUPERGROUP
+    """:const:`telegram.constants.CHAT_SUPERGROUP`"""
+    CHANNEL: ClassVar[str] = constants.CHAT_CHANNEL
+    """:const:`telegram.constants.CHAT_CHANNEL`"""
 
-    def __init__(self,
-                 id,
-                 type,
-                 title=None,
-                 username=None,
-                 first_name=None,
-                 last_name=None,
-                 bot=None,
-                 photo=None,
-                 description=None,
-                 invite_link=None,
-                 pinned_message=None,
-                 permissions=None,
-                 sticker_set_name=None,
-                 can_set_sticker_set=None,
-                 slow_mode_delay=None,
-                 **kwargs):
+    def __init__(
+        self,
+        id: int,
+        type: str,
+        title: str = None,
+        username: str = None,
+        first_name: str = None,
+        last_name: str = None,
+        bot: 'Bot' = None,
+        photo: ChatPhoto = None,
+        description: str = None,
+        invite_link: str = None,
+        pinned_message: 'Message' = None,
+        permissions: ChatPermissions = None,
+        sticker_set_name: str = None,
+        can_set_sticker_set: bool = None,
+        slow_mode_delay: int = None,
+        **kwargs: Any,
+    ):
         # Required
         self.id = int(id)
         self.type = type
@@ -132,29 +143,44 @@ class Chat(TelegramObject):
         self._id_attrs = (self.id,)
 
     @property
-    def link(self):
+    def link(self) -> Optional[str]:
         """:obj:`str`: Convenience property. If the chat has a :attr:`username`, returns a t.me
         link of the chat."""
         if self.username:
             return "https://t.me/{}".format(self.username)
         return None
 
+    @property
+    def is_anonymous_admin(self) -> bool:
+        """:obj:`bool`: Convenience property. Returns :obj:`True`, if this chat is with is the bot
+        representing anonymous admins. This behaviour is undocumented and might be changed
+        by Telegram."""
+
+        return self.id == constants.ANONYMOUS_ADMIN_ID
+
+    @property
+    def is_service_chat(self) -> bool:
+        """:obj:`bool`: Convenience property. Returns :obj:`True`, if this chat is the Telegram
+        service chat. This behaviour is undocumented and might be changed by Telegram."""
+
+        return self.id == constants.SERVICE_CHAT_ID
+
     @classmethod
-    def de_json(cls, data, bot):
+    def de_json(cls, data: JSONDict, bot: 'Bot') -> Optional['Chat']:
+        data = cls.parse_data(data)
+
         if not data:
             return None
 
         data['photo'] = ChatPhoto.de_json(data.get('photo'), bot)
         from telegram import Message
-        pinned_message = data.get('pinned_message')
-        if pinned_message:
-            pinned_message['default_quote'] = data.get('default_quote')
-        data['pinned_message'] = Message.de_json(pinned_message, bot)
+
+        data['pinned_message'] = Message.de_json(data.get('pinned_message'), bot)
         data['permissions'] = ChatPermissions.de_json(data.get('permissions'), bot)
 
         return cls(bot=bot, **data)
 
-    def leave(self, *args, **kwargs):
+    def leave(self, *args: Any, **kwargs: Any) -> bool:
         """Shortcut for::
 
             bot.leave_chat(update.effective_chat.id, *args, **kwargs)
@@ -165,7 +191,7 @@ class Chat(TelegramObject):
         """
         return self.bot.leave_chat(self.id, *args, **kwargs)
 
-    def get_administrators(self, *args, **kwargs):
+    def get_administrators(self, *args: Any, **kwargs: Any) -> List['ChatMember']:
         """Shortcut for::
 
             bot.get_chat_administrators(update.effective_chat.id, *args, **kwargs)
@@ -179,7 +205,7 @@ class Chat(TelegramObject):
         """
         return self.bot.get_chat_administrators(self.id, *args, **kwargs)
 
-    def get_members_count(self, *args, **kwargs):
+    def get_members_count(self, *args: Any, **kwargs: Any) -> int:
         """Shortcut for::
 
             bot.get_chat_members_count(update.effective_chat.id, *args, **kwargs)
@@ -190,7 +216,7 @@ class Chat(TelegramObject):
         """
         return self.bot.get_chat_members_count(self.id, *args, **kwargs)
 
-    def get_member(self, *args, **kwargs):
+    def get_member(self, *args: Any, **kwargs: Any) -> 'ChatMember':
         """Shortcut for::
 
             bot.get_chat_member(update.effective_chat.id, *args, **kwargs)
@@ -201,7 +227,7 @@ class Chat(TelegramObject):
         """
         return self.bot.get_chat_member(self.id, *args, **kwargs)
 
-    def kick_member(self, *args, **kwargs):
+    def kick_member(self, *args: Any, **kwargs: Any) -> bool:
         """Shortcut for::
 
                 bot.kick_chat_member(update.effective_chat.id, *args, **kwargs)
@@ -217,7 +243,7 @@ class Chat(TelegramObject):
         """
         return self.bot.kick_chat_member(self.id, *args, **kwargs)
 
-    def unban_member(self, *args, **kwargs):
+    def unban_member(self, *args: Any, **kwargs: Any) -> bool:
         """Shortcut for::
 
                 bot.unban_chat_member(update.effective_chat.id, *args, **kwargs)
@@ -228,18 +254,18 @@ class Chat(TelegramObject):
         """
         return self.bot.unban_chat_member(self.id, *args, **kwargs)
 
-    def set_permissions(self, *args, **kwargs):
+    def set_permissions(self, *args: Any, **kwargs: Any) -> bool:
         """Shortcut for::
 
                 bot.set_chat_permissions(update.effective_chat.id, *args, **kwargs)
 
         Returns:
-        :obj:`bool`: If the action was sent successfully.
+            :obj:`bool`: If the action was sent successfully.
 
-    """
+        """
         return self.bot.set_chat_permissions(self.id, *args, **kwargs)
 
-    def set_administrator_custom_title(self, *args, **kwargs):
+    def set_administrator_custom_title(self, *args: Any, **kwargs: Any) -> bool:
         """Shortcut for::
 
                 bot.set_chat_administrator_custom_title(update.effective_chat.id, *args, **kwargs)
@@ -247,10 +273,10 @@ class Chat(TelegramObject):
         Returns:
         :obj:`bool`: If the action was sent successfully.
 
-    """
+        """
         return self.bot.set_chat_administrator_custom_title(self.id, *args, **kwargs)
 
-    def send_message(self, *args, **kwargs):
+    def send_message(self, *args: Any, **kwargs: Any) -> 'Message':
         """Shortcut for::
 
             bot.send_message(update.effective_chat.id, *args, **kwargs)
@@ -261,7 +287,7 @@ class Chat(TelegramObject):
         """
         return self.bot.send_message(self.id, *args, **kwargs)
 
-    def send_media_group(self, *args, **kwargs):
+    def send_media_group(self, *args: Any, **kwargs: Any) -> List['Message']:
         """Shortcut for::
 
             bot.send_media_group(update.effective_chat.id, *args, **kwargs)
@@ -272,7 +298,7 @@ class Chat(TelegramObject):
         """
         return self.bot.send_media_group(self.id, *args, **kwargs)
 
-    def send_chat_action(self, *args, **kwargs):
+    def send_chat_action(self, *args: Any, **kwargs: Any) -> bool:
         """Shortcut for::
 
             bot.send_chat_action(update.effective_chat.id, *args, **kwargs)
@@ -286,7 +312,7 @@ class Chat(TelegramObject):
     send_action = send_chat_action
     """Alias for :attr:`send_chat_action`"""
 
-    def send_photo(self, *args, **kwargs):
+    def send_photo(self, *args: Any, **kwargs: Any) -> 'Message':
         """Shortcut for::
 
             bot.send_photo(update.effective_chat.id, *args, **kwargs)
@@ -297,7 +323,7 @@ class Chat(TelegramObject):
         """
         return self.bot.send_photo(self.id, *args, **kwargs)
 
-    def send_contact(self, *args, **kwargs):
+    def send_contact(self, *args: Any, **kwargs: Any) -> 'Message':
         """Shortcut for::
 
             bot.send_contact(update.effective_chat.id, *args, **kwargs)
@@ -308,7 +334,7 @@ class Chat(TelegramObject):
         """
         return self.bot.send_contact(self.id, *args, **kwargs)
 
-    def send_audio(self, *args, **kwargs):
+    def send_audio(self, *args: Any, **kwargs: Any) -> 'Message':
         """Shortcut for::
 
             bot.send_audio(update.effective_chat.id, *args, **kwargs)
@@ -319,7 +345,7 @@ class Chat(TelegramObject):
         """
         return self.bot.send_audio(self.id, *args, **kwargs)
 
-    def send_document(self, *args, **kwargs):
+    def send_document(self, *args: Any, **kwargs: Any) -> 'Message':
         """Shortcut for::
 
             bot.send_document(update.effective_chat.id, *args, **kwargs)
@@ -330,7 +356,7 @@ class Chat(TelegramObject):
         """
         return self.bot.send_document(self.id, *args, **kwargs)
 
-    def send_dice(self, *args, **kwargs):
+    def send_dice(self, *args: Any, **kwargs: Any) -> 'Message':
         """Shortcut for::
 
             bot.send_dice(update.effective_chat.id, *args, **kwargs)
@@ -341,7 +367,7 @@ class Chat(TelegramObject):
         """
         return self.bot.send_dice(self.id, *args, **kwargs)
 
-    def send_game(self, *args, **kwargs):
+    def send_game(self, *args: Any, **kwargs: Any) -> 'Message':
         """Shortcut for::
 
             bot.send_game(update.effective_chat.id, *args, **kwargs)
@@ -352,7 +378,7 @@ class Chat(TelegramObject):
         """
         return self.bot.send_game(self.id, *args, **kwargs)
 
-    def send_invoice(self, *args, **kwargs):
+    def send_invoice(self, *args: Any, **kwargs: Any) -> 'Message':
         """Shortcut for::
 
             bot.send_invoice(update.effective_chat.id, *args, **kwargs)
@@ -363,7 +389,7 @@ class Chat(TelegramObject):
         """
         return self.bot.send_invoice(self.id, *args, **kwargs)
 
-    def send_location(self, *args, **kwargs):
+    def send_location(self, *args: Any, **kwargs: Any) -> 'Message':
         """Shortcut for::
 
             bot.send_location(update.effective_chat.id, *args, **kwargs)
@@ -374,7 +400,7 @@ class Chat(TelegramObject):
         """
         return self.bot.send_location(self.id, *args, **kwargs)
 
-    def send_animation(self, *args, **kwargs):
+    def send_animation(self, *args: Any, **kwargs: Any) -> 'Message':
         """Shortcut for::
 
             bot.send_animation(update.effective_chat.id, *args, **kwargs)
@@ -385,7 +411,7 @@ class Chat(TelegramObject):
         """
         return self.bot.send_animation(self.id, *args, **kwargs)
 
-    def send_sticker(self, *args, **kwargs):
+    def send_sticker(self, *args: Any, **kwargs: Any) -> 'Message':
         """Shortcut for::
 
             bot.send_sticker(update.effective_chat.id, *args, **kwargs)
@@ -396,7 +422,7 @@ class Chat(TelegramObject):
         """
         return self.bot.send_sticker(self.id, *args, **kwargs)
 
-    def send_venue(self, *args, **kwargs):
+    def send_venue(self, *args: Any, **kwargs: Any) -> 'Message':
         """Shortcut for::
 
             bot.send_venue(update.effective_chat.id, *args, **kwargs)
@@ -407,7 +433,7 @@ class Chat(TelegramObject):
         """
         return self.bot.send_venue(self.id, *args, **kwargs)
 
-    def send_video(self, *args, **kwargs):
+    def send_video(self, *args: Any, **kwargs: Any) -> 'Message':
         """Shortcut for::
 
             bot.send_video(update.effective_chat.id, *args, **kwargs)
@@ -418,7 +444,7 @@ class Chat(TelegramObject):
         """
         return self.bot.send_video(self.id, *args, **kwargs)
 
-    def send_video_note(self, *args, **kwargs):
+    def send_video_note(self, *args: Any, **kwargs: Any) -> 'Message':
         """Shortcut for::
 
             bot.send_video_note(update.effective_chat.id, *args, **kwargs)
@@ -429,7 +455,7 @@ class Chat(TelegramObject):
         """
         return self.bot.send_video_note(self.id, *args, **kwargs)
 
-    def send_voice(self, *args, **kwargs):
+    def send_voice(self, *args: Any, **kwargs: Any) -> 'Message':
         """Shortcut for::
 
             bot.send_voice(update.effective_chat.id, *args, **kwargs)
@@ -440,7 +466,7 @@ class Chat(TelegramObject):
         """
         return self.bot.send_voice(self.id, *args, **kwargs)
 
-    def send_poll(self, *args, **kwargs):
+    def send_poll(self, *args: Any, **kwargs: Any) -> 'Message':
         """Shortcut for::
 
             bot.send_poll(update.effective_chat.id, *args, **kwargs)

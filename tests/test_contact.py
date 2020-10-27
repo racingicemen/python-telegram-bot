@@ -24,8 +24,12 @@ from telegram import Contact, Voice
 
 @pytest.fixture(scope='class')
 def contact():
-    return Contact(TestContact.phone_number, TestContact.first_name, TestContact.last_name,
-                   TestContact.user_id)
+    return Contact(
+        TestContact.phone_number,
+        TestContact.first_name,
+        TestContact.last_name,
+        TestContact.user_id,
+    )
 
 
 class TestContact:
@@ -42,8 +46,12 @@ class TestContact:
         assert contact.first_name == self.first_name
 
     def test_de_json_all(self, bot):
-        json_dict = {'phone_number': self.phone_number, 'first_name': self.first_name,
-                     'last_name': self.last_name, 'user_id': self.user_id}
+        json_dict = {
+            'phone_number': self.phone_number,
+            'first_name': self.first_name,
+            'last_name': self.last_name,
+            'user_id': self.user_id,
+        }
         contact = Contact.de_json(json_dict, bot)
 
         assert contact.phone_number == self.phone_number
@@ -52,13 +60,13 @@ class TestContact:
         assert contact.user_id == self.user_id
 
     def test_send_with_contact(self, monkeypatch, bot, chat_id, contact):
-        def test(_, url, data, **kwargs):
+        def test(url, data, **kwargs):
             phone = data['phone_number'] == contact.phone_number
             first = data['first_name'] == contact.first_name
             last = data['last_name'] == contact.last_name
             return phone and first and last
 
-        monkeypatch.setattr('telegram.utils.request.Request.post', test)
+        monkeypatch.setattr(bot.request, 'post', test)
         message = bot.send_contact(contact=contact, chat_id=chat_id)
         assert message
 

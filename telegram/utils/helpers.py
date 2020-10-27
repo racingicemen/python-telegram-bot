@@ -26,24 +26,34 @@ from collections import defaultdict
 from html import escape
 from numbers import Number
 
+import pytz
+
 try:
     import ujson as json
 except ImportError:
-    import json
+    import json  # type: ignore[no-redef]
 
+
+from telegram.utils.types import JSONDict
+from typing import Union, Any, Optional, Dict, DefaultDict, Tuple, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from telegram import MessageEntity
 
 # From https://stackoverflow.com/questions/2549939/get-signal-names-from-numbers-in-python
-_signames = {v: k
-             for k, v in reversed(sorted(vars(signal).items()))
-             if k.startswith('SIG') and not k.startswith('SIG_')}
+_signames = {
+    v: k
+    for k, v in reversed(sorted(vars(signal).items()))
+    if k.startswith('SIG') and not k.startswith('SIG_')
+}
 
 
-def get_signal_name(signum):
+def get_signal_name(signum: int) -> str:
     """Returns the signal name of the given signal number."""
     return _signames[signum]
 
 
-def escape_markdown(text, version=1, entity_type=None):
+def escape_markdown(text: str, version: int = 1, entity_type: str = None) -> str:
     """
     Helper function to escape telegram markup symbols.
 
@@ -72,28 +82,27 @@ def escape_markdown(text, version=1, entity_type=None):
 
 
 # -------- date/time related helpers --------
-# TODO: add generic specification of UTC for naive datetimes to docs
-
-def _datetime_to_float_timestamp(dt_obj):
+def _datetime_to_float_timestamp(dt_obj: dtm.datetime) -> float:
     """
     Converts a datetime object to a float timestamp (with sub-second precision).
     If the datetime object is timezone-naive, it is assumed to be in UTC.
     """
-
     if dt_obj.tzinfo is None:
         dt_obj = dt_obj.replace(tzinfo=dtm.timezone.utc)
     return dt_obj.timestamp()
 
 
-def to_float_timestamp(t, reference_timestamp=None):
+def to_float_timestamp(
+    t: Union[int, float, dtm.timedelta, dtm.datetime, dtm.time],
+    reference_timestamp: float = None,
+    tzinfo: pytz.BaseTzInfo = None,
+) -> float:
     """
     Converts a given time object to a float POSIX timestamp.
     Used to convert different time specifications to a common format. The time object
     can be relative (i.e. indicate a time increment, or a time of day) or absolute.
     Any objects from the :class:`datetime` module that are timezone-naive will be assumed
-    to be in UTC.
-
-    :obj:`None` s are left alone (i.e. ``to_float_timestamp(None)`` is :obj:`None`).
+    to be in UTC, if ``bot`` is not passed or ``bot.defaults`` is :obj:`None`.
 
     Args:
         t (int | float | datetime.timedelta | datetime.datetime | datetime.time):
@@ -113,6 +122,9 @@ def to_float_timestamp(t, reference_timestamp=None):
             If ``t`` is given as an absolute representation of date & time (i.e. a
             ``datetime.datetime`` object), ``reference_timestamp`` is not relevant and so its
             value should be :obj:`None`. If this is not the case, a ``ValueError`` will be raised.
+        tzinfo (:obj:`datetime.tzinfo`, optional): If ``t`` is a naive object from the
+            :class:`datetime` module, it will be interpreted as this timezone. Defaults to
+            ``pytz.utc``.
 
     Returns:
         (float | None) The return value depends on the type of argument ``t``. If ``t`` is
@@ -136,35 +148,56 @@ def to_float_timestamp(t, reference_timestamp=None):
 
     if isinstance(t, dtm.timedelta):
         return reference_timestamp + t.total_seconds()
-    elif isinstance(t, Number):
+    elif isinstance(t, (int, float)):
         return reference_timestamp + t
-    elif isinstance(t, dtm.time):
-        if t.tzinfo is not None:
-            reference_dt = dtm.datetime.fromtimestamp(reference_timestamp, tz=t.tzinfo)
-        else:
-            reference_dt = dtm.datetime.utcfromtimestamp(reference_timestamp)  # assume UTC
+
+    if tzinfo is None:
+        tzinfo = pytz.utc
+
+    if isinstance(t, dtm.time):
+        reference_dt = dtm.datetime.fromtimestamp(reference_timestamp, tz=t.tzinfo or tzinfo)
         reference_date = reference_dt.date()
         reference_time = reference_dt.timetz()
-        if reference_time > t:  # if the time of day has passed today, use tomorrow
-            reference_date += dtm.timedelta(days=1)
-        return _datetime_to_float_timestamp(dtm.datetime.combine(reference_date, t))
+
+        aware_datetime = dtm.datetime.combine(reference_date, t)
+        if aware_datetime.tzinfo is None:
+            aware_datetime = tzinfo.localize(aware_datetime)
+
+        # if the time of day has passed today, use tomorrow
+        if reference_time > aware_datetime.timetz():
+            aware_datetime += dtm.timedelta(days=1)
+        return _datetime_to_float_timestamp(aware_datetime)
     elif isinstance(t, dtm.datetime):
+        if t.tzinfo is None:
+            t = tzinfo.localize(t)
         return _datetime_to_float_timestamp(t)
+    elif isinstance(t, Number):
+        return reference_timestamp + t
 
     raise TypeError('Unable to convert {} object to timestamp'.format(type(t).__name__))
 
 
-def to_timestamp(dt_obj, reference_timestamp=None):
+def to_timestamp(
+    dt_obj: Union[int, float, dtm.timedelta, dtm.datetime, dtm.time, None],
+    reference_timestamp: float = None,
+    tzinfo: pytz.BaseTzInfo = None,
+) -> Optional[int]:
     """
     Wrapper over :func:`to_float_timestamp` which returns an integer (the float value truncated
     down to the nearest integer).
 
     See the documentation for :func:`to_float_timestamp` for more details.
     """
-    return int(to_float_timestamp(dt_obj, reference_timestamp)) if dt_obj is not None else None
+    return (
+        int(to_float_timestamp(dt_obj, reference_timestamp, tzinfo))
+        if dt_obj is not None
+        else None
+    )
 
 
-def from_timestamp(unixtime, tzinfo=dtm.timezone.utc):
+def from_timestamp(
+    unixtime: Optional[int], tzinfo: dtm.tzinfo = pytz.utc
+) -> Optional[dtm.datetime]:
     """
     Converts an (integer) unix timestamp to a timezone aware datetime object.
     :obj:`None`s are left alone (i.e. ``from_timestamp(None)`` is :obj:`None`).
@@ -186,10 +219,11 @@ def from_timestamp(unixtime, tzinfo=dtm.timezone.utc):
     else:
         return dtm.datetime.utcfromtimestamp(unixtime)
 
+
 # -------- end --------
 
 
-def mention_html(user_id, name):
+def mention_html(user_id: int, name: str) -> Optional[str]:
     """
     Args:
         user_id (:obj:`int`) The user's id which you want to mention.
@@ -202,7 +236,7 @@ def mention_html(user_id, name):
         return u'<a href="tg://user?id={}">{}</a>'.format(user_id, escape(name))
 
 
-def mention_markdown(user_id, name, version=1):
+def mention_markdown(user_id: int, name: str, version: int = 1) -> Optional[str]:
     """
     Args:
         user_id (:obj:`int`) The user's id which you want to mention.
@@ -217,7 +251,7 @@ def mention_markdown(user_id, name, version=1):
         return u'[{}](tg://user?id={})'.format(escape_markdown(name, version=version), user_id)
 
 
-def effective_message_type(entity):
+def effective_message_type(entity: 'MessageEntity') -> Optional[str]:
     """
     Extracts the type of message as a string identifier from a :class:`telegram.Message` or a
     :class:`telegram.Update`.
@@ -248,7 +282,7 @@ def effective_message_type(entity):
     return None
 
 
-def create_deep_linked_url(bot_username, payload=None, group=False):
+def create_deep_linked_url(bot_username: str, payload: str = None, group: bool = False) -> str:
     """
     Creates a deep-linked URL for this ``bot_username`` with the specified ``payload``.
     See  https://core.telegram.org/bots#deep-linking to learn more.
@@ -283,32 +317,30 @@ def create_deep_linked_url(bot_username, payload=None, group=False):
         raise ValueError("The deep-linking payload must not exceed 64 characters.")
 
     if not re.match(r'^[A-Za-z0-9_-]+$', payload):
-        raise ValueError("Only the following characters are allowed for deep-linked "
-                         "URLs: A-Z, a-z, 0-9, _ and -")
+        raise ValueError(
+            "Only the following characters are allowed for deep-linked "
+            "URLs: A-Z, a-z, 0-9, _ and -"
+        )
 
     if group:
         key = 'startgroup'
     else:
         key = 'start'
 
-    return '{}?{}={}'.format(
-        base_url,
-        key,
-        payload
-    )
+    return '{}?{}={}'.format(base_url, key, payload)
 
 
-def encode_conversations_to_json(conversations):
+def encode_conversations_to_json(conversations: Dict[str, Dict[Tuple, Any]]) -> str:
     """Helper method to encode a conversations dict (that uses tuples as keys) to a
     JSON-serializable way. Use :attr:`_decode_conversations_from_json` to decode.
 
     Args:
-        conversations (:obj:`dict`): The conversations dict to transofrm to JSON.
+        conversations (:obj:`dict`): The conversations dict to transform to JSON.
 
     Returns:
         :obj:`str`: The JSON-serialized conversations dict
     """
-    tmp = {}
+    tmp: Dict[str, JSONDict] = {}
     for handler, states in conversations.items():
         tmp[handler] = {}
         for key, state in states.items():
@@ -316,7 +348,7 @@ def encode_conversations_to_json(conversations):
     return json.dumps(tmp)
 
 
-def decode_conversations_from_json(json_string):
+def decode_conversations_from_json(json_string: str) -> Dict[str, Dict[Tuple, Any]]:
     """Helper method to decode a conversations dict (that uses tuples as keys) from a
     JSON-string created with :attr:`_encode_conversations_to_json`.
 
@@ -327,7 +359,7 @@ def decode_conversations_from_json(json_string):
         :obj:`dict`: The conversations dict after decoding
     """
     tmp = json.loads(json_string)
-    conversations = {}
+    conversations: Dict[str, Dict[Tuple, Any]] = {}
     for handler, states in tmp.items():
         conversations[handler] = {}
         for key, state in states.items():
@@ -335,7 +367,7 @@ def decode_conversations_from_json(json_string):
     return conversations
 
 
-def decode_user_chat_data_from_json(data):
+def decode_user_chat_data_from_json(data: str) -> DefaultDict[int, Dict[Any, Any]]:
     """Helper method to decode chat or user data (that uses ints as keys) from a
     JSON-string.
 
@@ -346,12 +378,12 @@ def decode_user_chat_data_from_json(data):
         :obj:`dict`: The user/chat_data defaultdict after decoding
     """
 
-    tmp = defaultdict(dict)
+    tmp: DefaultDict[int, Dict[Any, Any]] = defaultdict(dict)
     decoded_data = json.loads(data)
-    for user, data in decoded_data.items():
+    for user, user_data in decoded_data.items():
         user = int(user)
         tmp[user] = {}
-        for key, value in data.items():
+        for key, value in user_data.items():
             try:
                 key = int(key)
             except ValueError:
@@ -403,12 +435,13 @@ class DefaultValue:
     Args:
         value (:obj:`obj`): The value of the default argument
     """
-    def __init__(self, value=None):
+
+    def __init__(self, value: Any = None):
         self.value = value
 
-    def __bool__(self):
+    def __bool__(self) -> bool:
         return bool(self.value)
 
 
-DEFAULT_NONE = DefaultValue(None)
+DEFAULT_NONE: DefaultValue = DefaultValue(None)
 """:class:`DefaultValue`: Default `None`"""

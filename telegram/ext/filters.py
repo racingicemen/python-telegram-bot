@@ -23,15 +23,24 @@ import re
 from abc import ABC, abstractmethod
 from threading import Lock
 
-from telegram import Chat, Update, MessageEntity
+from telegram import Chat, Update, MessageEntity, Message
 
-__all__ = ['Filters', 'BaseFilter', 'InvertedFilter', 'MergedFilter']
+from typing import Optional, Dict, Union, List, Pattern, Match, cast, Set, FrozenSet
+
+__all__ = [
+    'Filters',
+    'BaseFilter',
+    'MessageFilter',
+    'UpdateFilter',
+    'InvertedFilter',
+    'MergedFilter',
+]
 
 
 class BaseFilter(ABC):
-    """Base class for all Message Filters.
+    """Base class for all Filters.
 
-    Subclassing from this class filters to be combined using bitwise operators:
+    Filters subclassing from this class can combined using bitwise operators:
 
     And:
 
@@ -56,14 +65,17 @@ class BaseFilter(ABC):
 
             >>> Filters.regex(r'(a?x)') | Filters.regex(r'(b?x)')
 
-        With a message.text of `x`, will only ever return the matches for the first filter,
+        With ``message.text == x``, will only ever return the matches for the first filter,
         since the second one is never evaluated.
 
 
-    If you want to create your own filters create a class inheriting from this class and implement
-    a :meth:`filter` method that returns a boolean: :obj:`True` if the message should be
-    handled, :obj:`False` otherwise. Note that the filters work only as class instances, not
-    actual class objects (so remember to initialize your filter classes).
+    If you want to create your own filters create a class inheriting from either
+    :class:`MessageFilter` or :class:`UpdateFilter` and implement a :meth:``filter`` method that
+    returns a boolean: :obj:`True` if the message should be
+    handled, :obj:`False` otherwise.
+    Note that the filters work only as class instances, not
+    actual class objects (so remember to
+    initialize your filter classes).
 
     By default the filters name (what will get printed when converted to a string for display)
     will be the class name. If you want to overwrite this assign a better name to the :attr:`name`
@@ -71,8 +83,6 @@ class BaseFilter(ABC):
 
     Attributes:
         name (:obj:`str`): Name for this filter. Defaults to the type of filter.
-        update_filter (:obj:`bool`): Whether this filter should work on update. If :obj:`False` it
-            will run the filter on :attr:`update.effective_message`. Default is :obj:`False`.
         data_filter (:obj:`bool`): Whether this filter is a data filter. A data filter should
             return a dict with lists. The dict will be merged with
             :class:`telegram.ext.CallbackContext`'s internal dict in most cases
@@ -80,37 +90,81 @@ class BaseFilter(ABC):
     """
 
     name = None
-    update_filter = False
     data_filter = False
 
-    def __call__(self, update):
-        if self.update_filter:
-            return self.filter(update)
-        else:
-            return self.filter(update.effective_message)
+    @abstractmethod
+    def __call__(self, update: Update) -> Optional[Union[bool, Dict]]:
+        pass
 
-    def __and__(self, other):
+    def __and__(self, other: 'BaseFilter') -> 'BaseFilter':
         return MergedFilter(self, and_filter=other)
 
-    def __or__(self, other):
+    def __or__(self, other: 'BaseFilter') -> 'BaseFilter':
         return MergedFilter(self, or_filter=other)
 
-    def __invert__(self):
+    def __invert__(self) -> 'BaseFilter':
         return InvertedFilter(self)
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         # We do this here instead of in a __init__ so filter don't have to call __init__ or super()
         if self.name is None:
             self.name = self.__class__.__name__
         return self.name
 
+
+class MessageFilter(BaseFilter, ABC):
+    """Base class for all Message Filters. In contrast to :class:`UpdateFilter`, the object passed
+    to :meth:`filter` is ``update.effective_message``.
+
+    Please see :class:`telegram.ext.BaseFilter` for details on how to create custom filters.
+
+    Attributes:
+        name (:obj:`str`): Name for this filter. Defaults to the type of filter.
+        data_filter (:obj:`bool`): Whether this filter is a data filter. A data filter should
+            return a dict with lists. The dict will be merged with
+            :class:`telegram.ext.CallbackContext`'s internal dict in most cases
+            (depends on the handler).
+
+    """
+
+    def __call__(self, update: Update) -> Optional[Union[bool, Dict]]:
+        return self.filter(update.effective_message)
+
     @abstractmethod
-    def filter(self, update):
+    def filter(self, message: Message) -> Optional[Union[bool, Dict]]:
         """This method must be overwritten.
 
-        Note:
-            If :attr:`update_filter` is :obj:`False` then the first argument is `message` and of
-            type :class:`telegram.Message`.
+        Args:
+            message (:class:`telegram.Message`): The message that is tested.
+
+        Returns:
+            :obj:`dict` or :obj:`bool`
+
+        """
+
+
+class UpdateFilter(BaseFilter, ABC):
+    """Base class for all Update Filters. In contrast to :class:`UpdateFilter`, the object
+    passed to :meth:`filter` is ``update``, which allows to create filters like
+    :attr:`Filters.update.edited_message`.
+
+    Please see :class:`telegram.ext.BaseFilter` for details on how to create custom filters.
+
+    Attributes:
+        name (:obj:`str`): Name for this filter. Defaults to the type of filter.
+        data_filter (:obj:`bool`): Whether this filter is a data filter. A data filter should
+            return a dict with lists. The dict will be merged with
+            :class:`telegram.ext.CallbackContext`'s internal dict in most cases
+            (depends on the handler).
+
+    """
+
+    def __call__(self, update: Update) -> Optional[Union[bool, Dict]]:
+        return self.filter(update)
+
+    @abstractmethod
+    def filter(self, update: Update) -> Optional[Union[bool, Dict]]:
+        """This method must be overwritten.
 
         Args:
             update (:class:`telegram.Update`): The update that is tested.
@@ -121,26 +175,25 @@ class BaseFilter(ABC):
         """
 
 
-class InvertedFilter(BaseFilter):
+class InvertedFilter(UpdateFilter):
     """Represents a filter that has been inverted.
 
     Args:
         f: The filter to invert.
 
     """
-    update_filter = True
 
-    def __init__(self, f):
+    def __init__(self, f: BaseFilter):
         self.f = f
 
-    def filter(self, update):
+    def filter(self, update: Update) -> bool:
         return not bool(self.f(update))
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return "<inverted {}>".format(self.f)
 
 
-class MergedFilter(BaseFilter):
+class MergedFilter(UpdateFilter):
     """Represents a filter consisting of two other filters.
 
     Args:
@@ -149,24 +202,25 @@ class MergedFilter(BaseFilter):
         or_filter: Optional filter to "or" with base_filter. Mutually exclusive with and_filter.
 
     """
-    update_filter = True
 
-    def __init__(self, base_filter, and_filter=None, or_filter=None):
+    def __init__(
+        self, base_filter: BaseFilter, and_filter: BaseFilter = None, or_filter: BaseFilter = None
+    ):
         self.base_filter = base_filter
         if self.base_filter.data_filter:
             self.data_filter = True
         self.and_filter = and_filter
-        if (self.and_filter
-                and not isinstance(self.and_filter, bool)
-                and self.and_filter.data_filter):
+        if (
+            self.and_filter
+            and not isinstance(self.and_filter, bool)
+            and self.and_filter.data_filter
+        ):
             self.data_filter = True
         self.or_filter = or_filter
-        if (self.or_filter
-                and not isinstance(self.and_filter, bool)
-                and self.or_filter.data_filter):
+        if self.or_filter and not isinstance(self.and_filter, bool) and self.or_filter.data_filter:
             self.data_filter = True
 
-    def _merge(self, base_output, comp_output):
+    def _merge(self, base_output: Union[bool, Dict], comp_output: Union[bool, Dict]) -> Dict:
         base = base_output if isinstance(base_output, dict) else {}
         comp = comp_output if isinstance(comp_output, dict) else {}
         for k in comp.keys():
@@ -182,7 +236,7 @@ class MergedFilter(BaseFilter):
                 base[k] = comp_value
         return base
 
-    def filter(self, update):
+    def filter(self, update: Update) -> Union[bool, Dict]:
         base_output = self.base_filter(update)
         # We need to check if the filters are data filters and if so return the merged data.
         # If it's not a data filter or an or_filter but no matches return bool
@@ -210,45 +264,49 @@ class MergedFilter(BaseFilter):
                     return True
         return False
 
-    def __repr__(self):
-        return "<{} {} {}>".format(self.base_filter, "and" if self.and_filter else "or",
-                                   self.and_filter or self.or_filter)
+    def __repr__(self) -> str:
+        return "<{} {} {}>".format(
+            self.base_filter, "and" if self.and_filter else "or", self.and_filter or self.or_filter
+        )
 
 
-class _DiceEmoji(BaseFilter):
-
-    def __init__(self, emoji=None, name=None):
+class _DiceEmoji(MessageFilter):
+    def __init__(self, emoji: str = None, name: str = None):
         self.name = 'Filters.dice.{}'.format(name) if name else 'Filters.dice'
         self.emoji = emoji
 
-    class _DiceValues(BaseFilter):
-
-        def __init__(self, values, name, emoji=None):
+    class _DiceValues(MessageFilter):
+        def __init__(self, values: Union[int, List[int]], name: str, emoji: str = None):
             self.values = [values] if isinstance(values, int) else values
             self.emoji = emoji
             self.name = '{}({})'.format(name, values)
 
-        def filter(self, message):
-            if bool(message.dice and message.dice.value in self.values):
+        def filter(self, message: Message) -> bool:
+            if message.dice and message.dice.value in self.values:
                 if self.emoji:
                     return message.dice.emoji == self.emoji
                 return True
+            return False
 
-    def __call__(self, update):
+    def __call__(  # type: ignore[override]
+        self, update: Union[Update, List[int]]
+    ) -> Union[bool, '_DiceValues']:
         if isinstance(update, Update):
             return self.filter(update.effective_message)
         else:
             return self._DiceValues(update, self.name, emoji=self.emoji)
 
-    def filter(self, message):
+    def filter(self, message: Message) -> bool:
         if bool(message.dice):
             if self.emoji:
                 return message.dice.emoji == self.emoji
             return True
+        return False
 
 
 class Filters:
-    """Predefined filters for use as the `filter` argument of :class:`telegram.ext.MessageHandler`.
+    """Predefined filters for use as the ``filter`` argument of
+    :class:`telegram.ext.MessageHandler`.
 
     Examples:
         Use ``MessageHandler(Filters.video, callback_method)`` to filter all video
@@ -256,36 +314,37 @@ class Filters:
 
     """
 
-    class _All(BaseFilter):
+    class _All(MessageFilter):
         name = 'Filters.all'
 
-        def filter(self, message):
+        def filter(self, message: Message) -> bool:
             return True
 
     all = _All()
     """All Messages."""
 
-    class _Text(BaseFilter):
+    class _Text(MessageFilter):
         name = 'Filters.text'
 
-        class _TextStrings(BaseFilter):
-
-            def __init__(self, strings):
+        class _TextStrings(MessageFilter):
+            def __init__(self, strings: List[str]):
                 self.strings = strings
                 self.name = 'Filters.text({})'.format(strings)
 
-            def filter(self, message):
+            def filter(self, message: Message) -> bool:
                 if message.text:
                     return message.text in self.strings
                 return False
 
-        def __call__(self, update):
+        def __call__(  # type: ignore[override]
+            self, update: Union[Update, List[str]]
+        ) -> Union[bool, '_TextStrings']:
             if isinstance(update, Update):
                 return self.filter(update.effective_message)
             else:
                 return self._TextStrings(update)
 
-        def filter(self, message):
+        def filter(self, message: Message) -> bool:
             return bool(message.text)
 
     text = _Text()
@@ -316,27 +375,28 @@ class Filters:
             exact matches are allowed. If not specified, will allow any text message.
     """
 
-    class _Caption(BaseFilter):
+    class _Caption(MessageFilter):
         name = 'Filters.caption'
 
-        class _CaptionStrings(BaseFilter):
-
-            def __init__(self, strings):
+        class _CaptionStrings(MessageFilter):
+            def __init__(self, strings: List[str]):
                 self.strings = strings
                 self.name = 'Filters.caption({})'.format(strings)
 
-            def filter(self, message):
+            def filter(self, message: Message) -> bool:
                 if message.caption:
                     return message.caption in self.strings
                 return False
 
-        def __call__(self, update):
+        def __call__(  # type: ignore[override]
+            self, update: Union[Update, List[str]]
+        ) -> Union[bool, '_CaptionStrings']:
             if isinstance(update, Update):
                 return self.filter(update.effective_message)
             else:
                 return self._CaptionStrings(update)
 
-        def filter(self, message):
+        def filter(self, message: Message) -> bool:
             return bool(message.caption)
 
     caption = _Caption()
@@ -351,28 +411,34 @@ class Filters:
             exact matches are allowed. If not specified, will allow any message with a caption.
     """
 
-    class _Command(BaseFilter):
+    class _Command(MessageFilter):
         name = 'Filters.command'
 
-        class _CommandOnlyStart(BaseFilter):
-
-            def __init__(self, only_start):
+        class _CommandOnlyStart(MessageFilter):
+            def __init__(self, only_start: bool):
                 self.only_start = only_start
                 self.name = 'Filters.command({})'.format(only_start)
 
-            def filter(self, message):
-                return (message.entities
-                        and any([e.type == MessageEntity.BOT_COMMAND for e in message.entities]))
+            def filter(self, message: Message) -> bool:
+                return bool(
+                    message.entities
+                    and any([e.type == MessageEntity.BOT_COMMAND for e in message.entities])
+                )
 
-        def __call__(self, update):
+        def __call__(  # type: ignore[override]
+            self, update: Union[bool, Update]
+        ) -> Union[bool, '_CommandOnlyStart']:
             if isinstance(update, Update):
                 return self.filter(update.effective_message)
             else:
                 return self._CommandOnlyStart(update)
 
-        def filter(self, message):
-            return (message.entities and message.entities[0].type == MessageEntity.BOT_COMMAND
-                    and message.entities[0].offset == 0)
+        def filter(self, message: Message) -> bool:
+            return bool(
+                message.entities
+                and message.entities[0].type == MessageEntity.BOT_COMMAND
+                and message.entities[0].offset == 0
+            )
 
     command = _Command()
     """
@@ -393,7 +459,7 @@ class Filters:
             command. Defaults to :obj:`True`.
     """
 
-    class regex(BaseFilter):
+    class regex(MessageFilter):
         """
         Filters updates by searching for an occurrence of ``pattern`` in the message text.
         The ``re.search()`` function is used to determine whether an update should be filtered.
@@ -424,42 +490,43 @@ class Filters:
 
         data_filter = True
 
-        def __init__(self, pattern):
+        def __init__(self, pattern: Union[str, Pattern]):
             if isinstance(pattern, str):
                 pattern = re.compile(pattern)
-            self.pattern = pattern
+            pattern = cast(Pattern, pattern)
+            self.pattern: Pattern = pattern
             self.name = 'Filters.regex({})'.format(self.pattern)
 
-        def filter(self, message):
+        def filter(self, message: Message) -> Optional[Dict[str, List[Match]]]:
             """"""  # remove method from docs
             if message.text:
                 match = self.pattern.search(message.text)
                 if match:
                     return {'matches': [match]}
-                return {}
+            return {}
 
-    class _Reply(BaseFilter):
+    class _Reply(MessageFilter):
         name = 'Filters.reply'
 
-        def filter(self, message):
+        def filter(self, message: Message) -> bool:
             return bool(message.reply_to_message)
 
     reply = _Reply()
     """Messages that are a reply to another message."""
 
-    class _Audio(BaseFilter):
+    class _Audio(MessageFilter):
         name = 'Filters.audio'
 
-        def filter(self, message):
+        def filter(self, message: Message) -> bool:
             return bool(message.audio)
 
     audio = _Audio()
     """Messages that contain :class:`telegram.Audio`."""
 
-    class _Document(BaseFilter):
+    class _Document(MessageFilter):
         name = 'Filters.document'
 
-        class category(BaseFilter):
+        class category(MessageFilter):
             """Filters documents by their category in the mime-type attribute.
 
             Note:
@@ -473,7 +540,7 @@ class Filters:
                 of audio sent as file, for example 'audio/mpeg' or 'audio/x-wav'.
             """
 
-            def __init__(self, category):
+            def __init__(self, category: Optional[str]):
                 """Initialize the category you want to filter
 
                 Args:
@@ -481,10 +548,11 @@ class Filters:
                 self.category = category
                 self.name = "Filters.document.category('{}')".format(self.category)
 
-            def filter(self, message):
+            def filter(self, message: Message) -> bool:
                 """"""  # remove method from docs
                 if message.document:
                     return message.document.mime_type.startswith(self.category)
+                return False
 
         application = category('application/')
         audio = category('audio/')
@@ -492,7 +560,7 @@ class Filters:
         video = category('video/')
         text = category('text/')
 
-        class mime_type(BaseFilter):
+        class mime_type(MessageFilter):
             """This Filter filters documents by their mime-type attribute
 
             Note:
@@ -505,18 +573,19 @@ class Filters:
                 ``Filters.documents.mime_type('audio/mpeg')`` filters all audio in mp3 format.
             """
 
-            def __init__(self, mimetype):
+            def __init__(self, mimetype: Optional[str]):
                 """Initialize the category you want to filter
 
                 Args:
-                    filetype (str, optional): mime_type of the media you want to filter"""
+                    mimetype (str, optional): mime_type of the media you want to filter"""
                 self.mimetype = mimetype
                 self.name = "Filters.document.mime_type('{}')".format(self.mimetype)
 
-            def filter(self, message):
+            def filter(self, message: Message) -> bool:
                 """"""  # remove method from docs
                 if message.document:
                     return message.document.mime_type == self.mimetype
+                return False
 
         apk = mime_type('application/vnd.android.package-archive')
         doc = mime_type('application/msword')
@@ -534,7 +603,7 @@ class Filters:
         xml = mime_type('application/xml')
         zip = mime_type('application/zip')
 
-        def filter(self, message):
+        def filter(self, message: Message) -> bool:
             return bool(message.document)
 
     document = _Document()
@@ -592,88 +661,88 @@ officedocument.wordprocessingml.document")``-
         zip: Same as ``Filters.document.mime_type("application/zip")``-
     """
 
-    class _Animation(BaseFilter):
+    class _Animation(MessageFilter):
         name = 'Filters.animation'
 
-        def filter(self, message):
+        def filter(self, message: Message) -> bool:
             return bool(message.animation)
 
     animation = _Animation()
     """Messages that contain :class:`telegram.Animation`."""
 
-    class _Photo(BaseFilter):
+    class _Photo(MessageFilter):
         name = 'Filters.photo'
 
-        def filter(self, message):
+        def filter(self, message: Message) -> bool:
             return bool(message.photo)
 
     photo = _Photo()
     """Messages that contain :class:`telegram.PhotoSize`."""
 
-    class _Sticker(BaseFilter):
+    class _Sticker(MessageFilter):
         name = 'Filters.sticker'
 
-        def filter(self, message):
+        def filter(self, message: Message) -> bool:
             return bool(message.sticker)
 
     sticker = _Sticker()
     """Messages that contain :class:`telegram.Sticker`."""
 
-    class _Video(BaseFilter):
+    class _Video(MessageFilter):
         name = 'Filters.video'
 
-        def filter(self, message):
+        def filter(self, message: Message) -> bool:
             return bool(message.video)
 
     video = _Video()
     """Messages that contain :class:`telegram.Video`."""
 
-    class _Voice(BaseFilter):
+    class _Voice(MessageFilter):
         name = 'Filters.voice'
 
-        def filter(self, message):
+        def filter(self, message: Message) -> bool:
             return bool(message.voice)
 
     voice = _Voice()
     """Messages that contain :class:`telegram.Voice`."""
 
-    class _VideoNote(BaseFilter):
+    class _VideoNote(MessageFilter):
         name = 'Filters.video_note'
 
-        def filter(self, message):
+        def filter(self, message: Message) -> bool:
             return bool(message.video_note)
 
     video_note = _VideoNote()
     """Messages that contain :class:`telegram.VideoNote`."""
 
-    class _Contact(BaseFilter):
+    class _Contact(MessageFilter):
         name = 'Filters.contact'
 
-        def filter(self, message):
+        def filter(self, message: Message) -> bool:
             return bool(message.contact)
 
     contact = _Contact()
     """Messages that contain :class:`telegram.Contact`."""
 
-    class _Location(BaseFilter):
+    class _Location(MessageFilter):
         name = 'Filters.location'
 
-        def filter(self, message):
+        def filter(self, message: Message) -> bool:
             return bool(message.location)
 
     location = _Location()
     """Messages that contain :class:`telegram.Location`."""
 
-    class _Venue(BaseFilter):
+    class _Venue(MessageFilter):
         name = 'Filters.venue'
 
-        def filter(self, message):
+        def filter(self, message: Message) -> bool:
             return bool(message.venue)
 
     venue = _Venue()
     """Messages that contain :class:`telegram.Venue`."""
 
-    class _StatusUpdate(BaseFilter):
+    class _StatusUpdate(UpdateFilter):
         """Subset for messages containing a status update.
 
         Examples:
@@ -681,88 +750,90 @@ officedocument.wordprocessingml.document")``-
             ``Filters.status_update`` for all status update messages.
 
         """
-        update_filter = True
 
-        class _NewChatMembers(BaseFilter):
+        class _NewChatMembers(MessageFilter):
             name = 'Filters.status_update.new_chat_members'
 
-            def filter(self, message):
+            def filter(self, message: Message) -> bool:
                 return bool(message.new_chat_members)
 
         new_chat_members = _NewChatMembers()
         """Messages that contain :attr:`telegram.Message.new_chat_members`."""
 
-        class _LeftChatMember(BaseFilter):
+        class _LeftChatMember(MessageFilter):
             name = 'Filters.status_update.left_chat_member'
 
-            def filter(self, message):
+            def filter(self, message: Message) -> bool:
                 return bool(message.left_chat_member)
 
         left_chat_member = _LeftChatMember()
         """Messages that contain :attr:`telegram.Message.left_chat_member`."""
 
-        class _NewChatTitle(BaseFilter):
+        class _NewChatTitle(MessageFilter):
             name = 'Filters.status_update.new_chat_title'
 
-            def filter(self, message):
+            def filter(self, message: Message) -> bool:
                 return bool(message.new_chat_title)
 
         new_chat_title = _NewChatTitle()
         """Messages that contain :attr:`telegram.Message.new_chat_title`."""
 
-        class _NewChatPhoto(BaseFilter):
+        class _NewChatPhoto(MessageFilter):
             name = 'Filters.status_update.new_chat_photo'
 
-            def filter(self, message):
+            def filter(self, message: Message) -> bool:
                 return bool(message.new_chat_photo)
 
         new_chat_photo = _NewChatPhoto()
         """Messages that contain :attr:`telegram.Message.new_chat_photo`."""
 
-        class _DeleteChatPhoto(BaseFilter):
+        class _DeleteChatPhoto(MessageFilter):
             name = 'Filters.status_update.delete_chat_photo'
 
-            def filter(self, message):
+            def filter(self, message: Message) -> bool:
                 return bool(message.delete_chat_photo)
 
         delete_chat_photo = _DeleteChatPhoto()
         """Messages that contain :attr:`telegram.Message.delete_chat_photo`."""
 
-        class _ChatCreated(BaseFilter):
+        class _ChatCreated(MessageFilter):
             name = 'Filters.status_update.chat_created'
 
-            def filter(self, message):
-                return bool(message.group_chat_created or message.supergroup_chat_created
-                            or message.channel_chat_created)
+            def filter(self, message: Message) -> bool:
+                return bool(
+                    message.group_chat_created
+                    or message.supergroup_chat_created
+                    or message.channel_chat_created
+                )
 
         chat_created = _ChatCreated()
         """Messages that contain :attr:`telegram.Message.group_chat_created`,
             :attr: `telegram.Message.supergroup_chat_created` or
             :attr: `telegram.Message.channel_chat_created`."""
 
-        class _Migrate(BaseFilter):
+        class _Migrate(MessageFilter):
             name = 'Filters.status_update.migrate'
 
-            def filter(self, message):
+            def filter(self, message: Message) -> bool:
                 return bool(message.migrate_from_chat_id or message.migrate_to_chat_id)
 
         migrate = _Migrate()
         """Messages that contain :attr:`telegram.Message.migrate_from_chat_id` or
-            :attr: `telegram.Message.migrate_to_chat_id`."""
+            :attr:`telegram.Message.migrate_to_chat_id`."""
 
-        class _PinnedMessage(BaseFilter):
+        class _PinnedMessage(MessageFilter):
             name = 'Filters.status_update.pinned_message'
 
-            def filter(self, message):
+            def filter(self, message: Message) -> bool:
                 return bool(message.pinned_message)
 
         pinned_message = _PinnedMessage()
         """Messages that contain :attr:`telegram.Message.pinned_message`."""
 
-        class _ConnectedWebsite(BaseFilter):
+        class _ConnectedWebsite(MessageFilter):
             name = 'Filters.status_update.connected_website'
 
-            def filter(self, message):
+            def filter(self, message: Message) -> bool:
                 return bool(message.connected_website)
 
         connected_website = _ConnectedWebsite()
@@ -770,12 +841,18 @@ officedocument.wordprocessingml.document")``-
 
         name = 'Filters.status_update'
 
-        def filter(self, message):
-            return bool(self.new_chat_members(message) or self.left_chat_member(message)
-                        or self.new_chat_title(message) or self.new_chat_photo(message)
-                        or self.delete_chat_photo(message) or self.chat_created(message)
-                        or self.migrate(message) or self.pinned_message(message)
-                        or self.connected_website(message))
+        def filter(self, message: Update) -> bool:
+            return bool(
+                self.new_chat_members(message)
+                or self.left_chat_member(message)
+                or self.new_chat_title(message)
+                or self.new_chat_photo(message)
+                or self.delete_chat_photo(message)
+                or self.chat_created(message)
+                or self.migrate(message)
+                or self.pinned_message(message)
+                or self.connected_website(message)
+            )
 
     status_update = _StatusUpdate()
     """Subset for messages containing a status update.
@@ -806,25 +883,25 @@ officedocument.wordprocessingml.document")``-
             :attr:`telegram.Message.pinned_message`.
     """
 
-    class _Forwarded(BaseFilter):
+    class _Forwarded(MessageFilter):
         name = 'Filters.forwarded'
 
-        def filter(self, message):
+        def filter(self, message: Message) -> bool:
             return bool(message.forward_date)
 
     forwarded = _Forwarded()
     """Messages that are forwarded."""
 
-    class _Game(BaseFilter):
+    class _Game(MessageFilter):
         name = 'Filters.game'
 
-        def filter(self, message):
+        def filter(self, message: Message) -> bool:
             return bool(message.game)
 
     game = _Game()
     """Messages that contain :class:`telegram.Game`."""
 
-    class entity(BaseFilter):
+    class entity(MessageFilter):
         """
         Filters messages to only allow those which have a :class:`telegram.MessageEntity`
         where their `type` matches `entity_type`.
@@ -838,15 +915,15 @@ officedocument.wordprocessingml.document")``-
 
         """
 
-        def __init__(self, entity_type):
+        def __init__(self, entity_type: str):
             self.entity_type = entity_type
             self.name = 'Filters.entity({})'.format(self.entity_type)
 
-        def filter(self, message):
+        def filter(self, message: Message) -> bool:
             """"""  # remove method from docs
             return any(entity.type == self.entity_type for entity in message.entities)
 
-    class caption_entity(BaseFilter):
+    class caption_entity(MessageFilter):
         """
         Filters media messages to only allow those which have a :class:`telegram.MessageEntity`
         where their `type` matches `entity_type`.
@@ -860,33 +937,33 @@ officedocument.wordprocessingml.document")``-
 
         """
 
-        def __init__(self, entity_type):
+        def __init__(self, entity_type: str):
             self.entity_type = entity_type
             self.name = 'Filters.caption_entity({})'.format(self.entity_type)
 
-        def filter(self, message):
+        def filter(self, message: Message) -> bool:
             """"""  # remove method from docs
             return any(entity.type == self.entity_type for entity in message.caption_entities)
 
-    class _Private(BaseFilter):
+    class _Private(MessageFilter):
         name = 'Filters.private'
 
-        def filter(self, message):
+        def filter(self, message: Message) -> bool:
             return message.chat.type == Chat.PRIVATE
 
     private = _Private()
     """Messages sent in a private chat."""
 
-    class _Group(BaseFilter):
+    class _Group(MessageFilter):
         name = 'Filters.group'
 
-        def filter(self, message):
+        def filter(self, message: Message) -> bool:
             return message.chat.type in [Chat.GROUP, Chat.SUPERGROUP]
 
     group = _Group()
     """Messages sent in a group chat."""
 
-    class user(BaseFilter):
+    class user(MessageFilter):
         """Filters messages to allow only those which are from specified user ID(s) or
         username(s).
 
@@ -920,18 +997,24 @@ officedocument.wordprocessingml.document")``-
             RuntimeError: If user_id and username are both present.
 
         """
-        def __init__(self, user_id=None, username=None, allow_empty=False):
+
+        def __init__(
+            self,
+            user_id: Union[int, List[int]] = None,
+            username: Union[str, List[str]] = None,
+            allow_empty: bool = False,
+        ):
             self.allow_empty = allow_empty
             self.__lock = Lock()
 
-            self._user_ids = set()
-            self._usernames = set()
+            self._user_ids: Set[int] = set()
+            self._usernames: Set[str] = set()
 
             self._set_user_ids(user_id)
             self._set_usernames(username)
 
         @staticmethod
-        def _parse_user_id(user_id):
+        def _parse_user_id(user_id: Union[int, List[int]]) -> Set[int]:
             if user_id is None:
                 return set()
             if isinstance(user_id, int):
@@ -939,46 +1022,48 @@ officedocument.wordprocessingml.document")``-
             return set(user_id)
 
         @staticmethod
-        def _parse_username(username):
+        def _parse_username(username: Union[str, List[str]]) -> Set[str]:
             if username is None:
                 return set()
             if isinstance(username, str):
                 return {username[1:] if username.startswith('@') else username}
             return {user[1:] if user.startswith('@') else user for user in username}
 
-        def _set_user_ids(self, user_id):
+        def _set_user_ids(self, user_id: Union[int, List[int]]) -> None:
             with self.__lock:
                 if user_id and self._usernames:
-                    raise RuntimeError("Can't set user_id in conjunction with (already set) "
-                                       "usernames.")
+                    raise RuntimeError(
+                        "Can't set user_id in conjunction with (already set) " "usernames."
+                    )
                 self._user_ids = self._parse_user_id(user_id)
 
-        def _set_usernames(self, username):
+        def _set_usernames(self, username: Union[str, List[str]]) -> None:
             with self.__lock:
                 if username and self._user_ids:
-                    raise RuntimeError("Can't set username in conjunction with (already set) "
-                                       "user_ids.")
+                    raise RuntimeError(
+                        "Can't set username in conjunction with (already set) " "user_ids."
+                    )
                 self._usernames = self._parse_username(username)
 
         @property
-        def user_ids(self):
+        def user_ids(self) -> FrozenSet[int]:
             with self.__lock:
                 return frozenset(self._user_ids)
 
         @user_ids.setter
-        def user_ids(self, user_id):
+        def user_ids(self, user_id: Union[int, List[int]]) -> None:
             self._set_user_ids(user_id)
 
         @property
-        def usernames(self):
+        def usernames(self) -> FrozenSet[str]:
             with self.__lock:
                 return frozenset(self._usernames)
 
         @usernames.setter
-        def usernames(self, username):
+        def usernames(self, username: Union[str, List[str]]) -> None:
             self._set_usernames(username)
 
-        def add_usernames(self, username):
+        def add_usernames(self, username: Union[str, List[str]]) -> None:
             """
             Add one or more users to the allowed usernames.
 
@@ -988,13 +1073,14 @@ officedocument.wordprocessingml.document")``-
             """
             with self.__lock:
                 if self._user_ids:
-                    raise RuntimeError("Can't set username in conjunction with (already set) "
-                                       "user_ids.")
+                    raise RuntimeError(
+                        "Can't set username in conjunction with (already set) " "user_ids."
+                    )
 
-                username = self._parse_username(username)
-                self._usernames |= username
+                parsed_username = self._parse_username(username)
+                self._usernames |= parsed_username
 
-        def add_user_ids(self, user_id):
+        def add_user_ids(self, user_id: Union[int, List[int]]) -> None:
             """
             Add one or more users to the allowed user ids.
 
@@ -1004,14 +1090,15 @@ officedocument.wordprocessingml.document")``-
             """
             with self.__lock:
                 if self._usernames:
-                    raise RuntimeError("Can't set user_id in conjunction with (already set) "
-                                       "usernames.")
+                    raise RuntimeError(
+                        "Can't set user_id in conjunction with (already set) " "usernames."
+                    )
 
-                user_id = self._parse_user_id(user_id)
+                parsed_user_id = self._parse_user_id(user_id)
 
-                self._user_ids |= user_id
+                self._user_ids |= parsed_user_id
 
-        def remove_usernames(self, username):
+        def remove_usernames(self, username: Union[str, List[str]]) -> None:
             """
             Remove one or more users from allowed usernames.
 
@@ -1021,13 +1108,14 @@ officedocument.wordprocessingml.document")``-
             """
             with self.__lock:
                 if self._user_ids:
-                    raise RuntimeError("Can't set username in conjunction with (already set) "
-                                       "user_ids.")
+                    raise RuntimeError(
+                        "Can't set username in conjunction with (already set) " "user_ids."
+                    )
 
-                username = self._parse_username(username)
-                self._usernames -= username
+                parsed_username = self._parse_username(username)
+                self._usernames -= parsed_username
 
-        def remove_user_ids(self, user_id):
+        def remove_user_ids(self, user_id: Union[int, List[int]]) -> None:
             """
             Remove one or more users from allowed user ids.
 
@@ -1037,23 +1125,25 @@ officedocument.wordprocessingml.document")``-
             """
             with self.__lock:
                 if self._usernames:
-                    raise RuntimeError("Can't set user_id in conjunction with (already set) "
-                                       "usernames.")
-                user_id = self._parse_user_id(user_id)
-                self._user_ids -= user_id
+                    raise RuntimeError(
+                        "Can't set user_id in conjunction with (already set) " "usernames."
+                    )
+                parsed_user_id = self._parse_user_id(user_id)
+                self._user_ids -= parsed_user_id
 
-        def filter(self, message):
+        def filter(self, message: Message) -> bool:
             """"""  # remove method from docs
             if message.from_user:
                 if self.user_ids:
                     return message.from_user.id in self.user_ids
                 if self.usernames:
-                    return (message.from_user.username
-                            and message.from_user.username in self.usernames)
+                    return bool(
+                        message.from_user.username and message.from_user.username in self.usernames
+                    )
                 return self.allow_empty
             return False
 
-    class via_bot(BaseFilter):
+    class via_bot(MessageFilter):
         """Filters messages to allow only those which are from specified via_bot ID(s) or
         username(s).
 
@@ -1087,18 +1177,23 @@ officedocument.wordprocessingml.document")``-
             RuntimeError: If bot_id and username are both present.
         """
 
-        def __init__(self, bot_id=None, username=None, allow_empty=False):
+        def __init__(
+            self,
+            bot_id: Union[int, List[int]] = None,
+            username: Union[str, List[str]] = None,
+            allow_empty: bool = False,
+        ):
             self.allow_empty = allow_empty
             self.__lock = Lock()
 
-            self._bot_ids = set()
-            self._usernames = set()
+            self._bot_ids: Set[int] = set()
+            self._usernames: Set[str] = set()
 
             self._set_bot_ids(bot_id)
             self._set_usernames(username)
 
         @staticmethod
-        def _parse_bot_id(bot_id):
+        def _parse_bot_id(bot_id: Union[int, List[int]]) -> Set[int]:
             if bot_id is None:
                 return set()
             if isinstance(bot_id, int):
@@ -1106,46 +1201,48 @@ officedocument.wordprocessingml.document")``-
             return set(bot_id)
 
         @staticmethod
-        def _parse_username(username):
+        def _parse_username(username: Union[str, List[str]]) -> Set[str]:
             if username is None:
                 return set()
             if isinstance(username, str):
                 return {username[1:] if username.startswith('@') else username}
             return {bot[1:] if bot.startswith('@') else bot for bot in username}
 
-        def _set_bot_ids(self, bot_id):
+        def _set_bot_ids(self, bot_id: Union[int, List[int]]) -> None:
             with self.__lock:
                 if bot_id and self._usernames:
-                    raise RuntimeError("Can't set bot_id in conjunction with (already set) "
-                                       "usernames.")
+                    raise RuntimeError(
+                        "Can't set bot_id in conjunction with (already set) " "usernames."
+                    )
                 self._bot_ids = self._parse_bot_id(bot_id)
 
-        def _set_usernames(self, username):
+        def _set_usernames(self, username: Union[str, List[str]]) -> None:
             with self.__lock:
                 if username and self._bot_ids:
-                    raise RuntimeError("Can't set username in conjunction with (already set) "
-                                       "bot_ids.")
+                    raise RuntimeError(
+                        "Can't set username in conjunction with (already set) " "bot_ids."
+                    )
                 self._usernames = self._parse_username(username)
 
         @property
-        def bot_ids(self):
+        def bot_ids(self) -> FrozenSet[int]:
             with self.__lock:
                 return frozenset(self._bot_ids)
 
         @bot_ids.setter
-        def bot_ids(self, bot_id):
+        def bot_ids(self, bot_id: Union[int, List[int]]) -> None:
             self._set_bot_ids(bot_id)
 
         @property
-        def usernames(self):
+        def usernames(self) -> FrozenSet[str]:
             with self.__lock:
                 return frozenset(self._usernames)
 
         @usernames.setter
-        def usernames(self, username):
+        def usernames(self, username: Union[str, List[str]]) -> None:
             self._set_usernames(username)
 
-        def add_usernames(self, username):
+        def add_usernames(self, username: Union[str, List[str]]) -> None:
             """
             Add one or more users to the allowed usernames.
 
@@ -1155,14 +1252,16 @@ officedocument.wordprocessingml.document")``-
             """
             with self.__lock:
                 if self._bot_ids:
-                    raise RuntimeError("Can't set username in conjunction with (already set) "
-                                       "bot_ids.")
+                    raise RuntimeError(
+                        "Can't set username in conjunction with (already set) " "bot_ids."
+                    )
 
-                username = self._parse_username(username)
-                self._usernames |= username
+                parsed_username = self._parse_username(username)
+                self._usernames |= parsed_username
 
-        def add_bot_ids(self, bot_id):
+        def add_bot_ids(self, bot_id: Union[int, List[int]]) -> None:
             """
+
             Add one or more users to the allowed user ids.
 
             Args:
@@ -1171,14 +1270,15 @@ officedocument.wordprocessingml.document")``-
             """
             with self.__lock:
                 if self._usernames:
-                    raise RuntimeError("Can't set bot_id in conjunction with (already set) "
-                                       "usernames.")
+                    raise RuntimeError(
+                        "Can't set bot_id in conjunction with (already set) " "usernames."
+                    )
 
-                bot_id = self._parse_bot_id(bot_id)
+                parsed_bot_id = self._parse_bot_id(bot_id)
 
-                self._bot_ids |= bot_id
+                self._bot_ids |= parsed_bot_id
 
-        def remove_usernames(self, username):
+        def remove_usernames(self, username: Union[str, List[str]]) -> None:
             """
             Remove one or more users from allowed usernames.
 
@@ -1188,13 +1288,14 @@ officedocument.wordprocessingml.document")``-
             """
             with self.__lock:
                 if self._bot_ids:
-                    raise RuntimeError("Can't set username in conjunction with (already set) "
-                                       "bot_ids.")
+                    raise RuntimeError(
+                        "Can't set username in conjunction with (already set) " "bot_ids."
+                    )
 
-                username = self._parse_username(username)
-                self._usernames -= username
+                parsed_username = self._parse_username(username)
+                self._usernames -= parsed_username
 
-        def remove_bot_ids(self, bot_id):
+        def remove_bot_ids(self, bot_id: Union[int, List[int]]) -> None:
             """
             Remove one or more users from allowed user ids.
 
@@ -1204,23 +1305,25 @@ officedocument.wordprocessingml.document")``-
             """
             with self.__lock:
                 if self._usernames:
-                    raise RuntimeError("Can't set bot_id in conjunction with (already set) "
-                                       "usernames.")
-                bot_id = self._parse_bot_id(bot_id)
-                self._bot_ids -= bot_id
+                    raise RuntimeError(
+                        "Can't set bot_id in conjunction with (already set) " "usernames."
+                    )
+                parsed_bot_id = self._parse_bot_id(bot_id)
+                self._bot_ids -= parsed_bot_id
 
-        def filter(self, message):
+        def filter(self, message: Message) -> bool:
             """"""  # remove method from docs
             if message.via_bot:
                 if self.bot_ids:
                     return message.via_bot.id in self.bot_ids
                 if self.usernames:
-                    return (message.via_bot.username
-                            and message.via_bot.username in self.usernames)
+                    return bool(
+                        message.via_bot.username and message.via_bot.username in self.usernames
+                    )
                 return self.allow_empty
             return False
 
-    class chat(BaseFilter):
+    class chat(MessageFilter):
         """Filters messages to allow only those which are from a specified chat ID or username.
 
         Examples:
@@ -1254,18 +1357,23 @@ officedocument.wordprocessingml.document")``-
 
         """
 
-        def __init__(self, chat_id=None, username=None, allow_empty=False):
+        def __init__(
+            self,
+            chat_id: Union[int, List[int]] = None,
+            username: Union[str, List[str]] = None,
+            allow_empty: bool = False,
+        ):
             self.allow_empty = allow_empty
             self.__lock = Lock()
 
-            self._chat_ids = set()
-            self._usernames = set()
+            self._chat_ids: Set[int] = set()
+            self._usernames: Set[str] = set()
 
             self._set_chat_ids(chat_id)
             self._set_usernames(username)
 
         @staticmethod
-        def _parse_chat_id(chat_id):
+        def _parse_chat_id(chat_id: Union[int, List[int]]) -> Set[int]:
             if chat_id is None:
                 return set()
             if isinstance(chat_id, int):
@@ -1273,46 +1381,48 @@ officedocument.wordprocessingml.document")``-
             return set(chat_id)
 
         @staticmethod
-        def _parse_username(username):
+        def _parse_username(username: Union[str, List[str]]) -> Set[str]:
             if username is None:
                 return set()
             if isinstance(username, str):
                 return {username[1:] if username.startswith('@') else username}
             return {chat[1:] if chat.startswith('@') else chat for chat in username}
 
-        def _set_chat_ids(self, chat_id):
+        def _set_chat_ids(self, chat_id: Union[int, List[int]]) -> None:
             with self.__lock:
                 if chat_id and self._usernames:
-                    raise RuntimeError("Can't set chat_id in conjunction with (already set) "
-                                       "usernames.")
+                    raise RuntimeError(
+                        "Can't set chat_id in conjunction with (already set) " "usernames."
+                    )
                 self._chat_ids = self._parse_chat_id(chat_id)
 
-        def _set_usernames(self, username):
+        def _set_usernames(self, username: Union[str, List[str]]) -> None:
             with self.__lock:
                 if username and self._chat_ids:
-                    raise RuntimeError("Can't set username in conjunction with (already set) "
-                                       "chat_ids.")
+                    raise RuntimeError(
+                        "Can't set username in conjunction with (already set) " "chat_ids."
+                    )
                 self._usernames = self._parse_username(username)
 
         @property
-        def chat_ids(self):
+        def chat_ids(self) -> FrozenSet[int]:
             with self.__lock:
                 return frozenset(self._chat_ids)
 
         @chat_ids.setter
-        def chat_ids(self, chat_id):
+        def chat_ids(self, chat_id: Union[int, List[int]]) -> None:
             self._set_chat_ids(chat_id)
 
         @property
-        def usernames(self):
+        def usernames(self) -> FrozenSet[str]:
             with self.__lock:
                 return frozenset(self._usernames)
 
         @usernames.setter
-        def usernames(self, username):
+        def usernames(self, username: Union[str, List[str]]) -> None:
             self._set_usernames(username)
 
-        def add_usernames(self, username):
+        def add_usernames(self, username: Union[str, List[str]]) -> None:
             """
             Add one or more chats to the allowed usernames.
 
@@ -1322,13 +1432,14 @@ officedocument.wordprocessingml.document")``-
             """
             with self.__lock:
                 if self._chat_ids:
-                    raise RuntimeError("Can't set username in conjunction with (already set) "
-                                       "chat_ids.")
+                    raise RuntimeError(
+                        "Can't set username in conjunction with (already set) " "chat_ids."
+                    )
 
-                username = self._parse_username(username)
-                self._usernames |= username
+                parsed_username = self._parse_username(username)
+                self._usernames |= parsed_username
 
-        def add_chat_ids(self, chat_id):
+        def add_chat_ids(self, chat_id: Union[int, List[int]]) -> None:
             """
             Add one or more chats to the allowed chat ids.
 
@@ -1338,14 +1449,15 @@ officedocument.wordprocessingml.document")``-
             """
             with self.__lock:
                 if self._usernames:
-                    raise RuntimeError("Can't set chat_id in conjunction with (already set) "
-                                       "usernames.")
+                    raise RuntimeError(
+                        "Can't set chat_id in conjunction with (already set) " "usernames."
+                    )
 
-                chat_id = self._parse_chat_id(chat_id)
+                parsed_chat_id = self._parse_chat_id(chat_id)
 
-                self._chat_ids |= chat_id
+                self._chat_ids |= parsed_chat_id
 
-        def remove_usernames(self, username):
+        def remove_usernames(self, username: Union[str, List[str]]) -> None:
             """
             Remove one or more chats from allowed usernames.
 
@@ -1355,13 +1467,14 @@ officedocument.wordprocessingml.document")``-
             """
             with self.__lock:
                 if self._chat_ids:
-                    raise RuntimeError("Can't set username in conjunction with (already set) "
-                                       "chat_ids.")
+                    raise RuntimeError(
+                        "Can't set username in conjunction with (already set) " "chat_ids."
+                    )
 
-                username = self._parse_username(username)
-                self._usernames -= username
+                parsed_username = self._parse_username(username)
+                self._usernames -= parsed_username
 
-        def remove_chat_ids(self, chat_id):
+        def remove_chat_ids(self, chat_id: Union[int, List[int]]) -> None:
             """
             Remove one or more chats from allowed chat ids.
 
@@ -1371,53 +1484,53 @@ officedocument.wordprocessingml.document")``-
             """
             with self.__lock:
                 if self._usernames:
-                    raise RuntimeError("Can't set chat_id in conjunction with (already set) "
-                                       "usernames.")
-                chat_id = self._parse_chat_id(chat_id)
-                self._chat_ids -= chat_id
+                    raise RuntimeError(
+                        "Can't set chat_id in conjunction with (already set) " "usernames."
+                    )
+                parsed_chat_id = self._parse_chat_id(chat_id)
+                self._chat_ids -= parsed_chat_id
 
-        def filter(self, message):
+        def filter(self, message: Message) -> bool:
             """"""  # remove method from docs
             if message.chat:
                 if self.chat_ids:
                     return message.chat.id in self.chat_ids
                 if self.usernames:
-                    return (message.chat.username
-                            and message.chat.username in self.usernames)
+                    return bool(message.chat.username and message.chat.username in self.usernames)
                 return self.allow_empty
             return False
 
-    class _Invoice(BaseFilter):
+    class _Invoice(MessageFilter):
         name = 'Filters.invoice'
 
-        def filter(self, message):
+        def filter(self, message: Message) -> bool:
             return bool(message.invoice)
 
     invoice = _Invoice()
     """Messages that contain :class:`telegram.Invoice`."""
 
-    class _SuccessfulPayment(BaseFilter):
+    class _SuccessfulPayment(MessageFilter):
         name = 'Filters.successful_payment'
 
-        def filter(self, message):
+        def filter(self, message: Message) -> bool:
             return bool(message.successful_payment)
 
     successful_payment = _SuccessfulPayment()
     """Messages that confirm a :class:`telegram.SuccessfulPayment`."""
 
-    class _PassportData(BaseFilter):
+    class _PassportData(MessageFilter):
         name = 'Filters.passport_data'
 
-        def filter(self, message):
+        def filter(self, message: Message) -> bool:
             return bool(message.passport_data)
 
     passport_data = _PassportData()
     """Messages that contain a :class:`telegram.PassportData`"""
 
-    class _Poll(BaseFilter):
+    class _Poll(MessageFilter):
         name = 'Filters.poll'
 
-        def filter(self, message):
+        def filter(self, message: Message) -> bool:
             return bool(message.poll)
 
     poll = _Poll()
@@ -1457,7 +1570,7 @@ officedocument.wordprocessingml.document")``-
             as for :attr:`Filters.dice`.
     """
 
-    class language(BaseFilter):
+    class language(MessageFilter):
         """Filters messages to only allow those which are from users with a certain language code.
 
         Note:
@@ -1474,78 +1587,75 @@ officedocument.wordprocessingml.document")``-
 
         """
 
-        def __init__(self, lang):
+        def __init__(self, lang: Union[str, List[str]]):
             if isinstance(lang, str):
+                lang = cast(str, lang)
                 self.lang = [lang]
             else:
+                lang = cast(List[str], lang)
                 self.lang = lang
             self.name = 'Filters.language({})'.format(self.lang)
 
-        def filter(self, message):
+        def filter(self, message: Message) -> bool:
             """"""  # remove method from docs
-            return message.from_user.language_code and any(
-                [message.from_user.language_code.startswith(x) for x in self.lang])
+            return bool(
+                message.from_user.language_code
+                and any([message.from_user.language_code.startswith(x) for x in self.lang])
+            )
 
-    class _UpdateType(BaseFilter):
-        update_filter = True
+    class _UpdateType(UpdateFilter):
         name = 'Filters.update'
 
-        class _Message(BaseFilter):
+        class _Message(UpdateFilter):
             name = 'Filters.update.message'
-            update_filter = True
 
-            def filter(self, update):
+            def filter(self, update: Update) -> bool:
                 return update.message is not None
 
         message = _Message()
 
-        class _EditedMessage(BaseFilter):
+        class _EditedMessage(UpdateFilter):
             name = 'Filters.update.edited_message'
-            update_filter = True
 
-            def filter(self, update):
+            def filter(self, update: Update) -> bool:
                 return update.edited_message is not None
 
         edited_message = _EditedMessage()
 
-        class _Messages(BaseFilter):
+        class _Messages(UpdateFilter):
             name = 'Filters.update.messages'
-            update_filter = True
 
-            def filter(self, update):
+            def filter(self, update: Update) -> bool:
                 return update.message is not None or update.edited_message is not None
 
         messages = _Messages()
 
-        class _ChannelPost(BaseFilter):
+        class _ChannelPost(UpdateFilter):
             name = 'Filters.update.channel_post'
-            update_filter = True
 
-            def filter(self, update):
+            def filter(self, update: Update) -> bool:
                 return update.channel_post is not None
 
         channel_post = _ChannelPost()
 
-        class _EditedChannelPost(BaseFilter):
-            update_filter = True
+        class _EditedChannelPost(UpdateFilter):
             name = 'Filters.update.edited_channel_post'
 
-            def filter(self, update):
+            def filter(self, update: Update) -> bool:
                 return update.edited_channel_post is not None
 
         edited_channel_post = _EditedChannelPost()
 
-        class _ChannelPosts(BaseFilter):
-            update_filter = True
+        class _ChannelPosts(UpdateFilter):
             name = 'Filters.update.channel_posts'
 
-            def filter(self, update):
+            def filter(self, update: Update) -> bool:
                 return update.channel_post is not None or update.edited_channel_post is not None
 
         channel_posts = _ChannelPosts()
 
-        def filter(self, update):
-            return self.messages(update) or self.channel_posts(update)
+        def filter(self, update: Update) -> bool:
+            return bool(self.messages(update) or self.channel_posts(update))
 
     update = _UpdateType()
     """Subset for filtering the type of update.

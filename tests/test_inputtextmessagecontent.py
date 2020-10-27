@@ -27,7 +27,8 @@ def input_text_message_content():
     return InputTextMessageContent(
         TestInputTextMessageContent.message_text,
         parse_mode=TestInputTextMessageContent.parse_mode,
-        disable_web_page_preview=TestInputTextMessageContent.disable_web_page_preview)
+        disable_web_page_preview=TestInputTextMessageContent.disable_web_page_preview,
+    )
 
 
 class TestInputTextMessageContent:
@@ -44,9 +45,29 @@ class TestInputTextMessageContent:
         input_text_message_content_dict = input_text_message_content.to_dict()
 
         assert isinstance(input_text_message_content_dict, dict)
-        assert (input_text_message_content_dict['message_text']
-                == input_text_message_content.message_text)
-        assert (input_text_message_content_dict['parse_mode']
-                == input_text_message_content.parse_mode)
-        assert (input_text_message_content_dict['disable_web_page_preview']
-                == input_text_message_content.disable_web_page_preview)
+        assert (
+            input_text_message_content_dict['message_text']
+            == input_text_message_content.message_text
+        )
+        assert (
+            input_text_message_content_dict['parse_mode'] == input_text_message_content.parse_mode
+        )
+        assert (
+            input_text_message_content_dict['disable_web_page_preview']
+            == input_text_message_content.disable_web_page_preview
+        )
+
+    def test_equality(self):
+        a = InputTextMessageContent('text')
+        b = InputTextMessageContent('text', parse_mode=ParseMode.HTML)
+        c = InputTextMessageContent('label')
+        d = ParseMode.HTML
+
+        assert a == b
+        assert hash(a) == hash(b)
+
+        assert a != c
+        assert hash(a) != hash(c)
+
+        assert a != d
+        assert hash(a) != hash(d)

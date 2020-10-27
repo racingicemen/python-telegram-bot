@@ -18,7 +18,8 @@
 # You should have received a copy of the GNU Lesser Public License
 # along with this program.  If not, see [http://www.gnu.org/licenses/].
 """This module contains an object that represents a Telegram Dice."""
-from telegram import TelegramObject
+from telegram import TelegramObject, constants
+from typing import Any, List, ClassVar
 
 
 class Dice(TelegramObject):
@@ -26,6 +27,9 @@ class Dice(TelegramObject):
     This object represents an animated emoji with a random value for currently supported base
     emoji. (The singular form of "dice" is "die". However, PTB mimics the Telegram API, which uses
     the term "dice".)
+
+    Objects of this class are comparable in terms of equality. Two objects of this class are
+    considered equal, if their :attr:`value` and :attr:`emoji` are equal.
 
     Note:
         If :attr:`emoji` is "🎯", a value of 6 currently represents a bullseye, while a value of 1
@@ -44,23 +48,18 @@ class Dice(TelegramObject):
         value (:obj:`int`): Value of the dice. 1-6 for dice and darts, 1-5 for basketball.
         emoji (:obj:`str`): Emoji on which the dice throw animation is based.
     """
-    def __init__(self, value, emoji, **kwargs):
+
+    def __init__(self, value: int, emoji: str, **kwargs: Any):
         self.value = value
         self.emoji = emoji
 
-    @classmethod
-    def de_json(cls, data, bot):
-        if not data:
-            return None
+        self._id_attrs = (self.value, self.emoji)
 
-        return cls(**data)
-
-    DICE = '🎲'
-    """:obj:`str`: '🎲'"""
-    DARTS = '🎯'
-    """:obj:`str`: '🎯'"""
-    BASKETBALL = '🏀'
-    """:obj:`str`: '🏀'"""
-    ALL_EMOJI = [DICE, DARTS, BASKETBALL]
-    """List[:obj:`str`]: List of all supported base emoji. Currently :attr:`DICE`,
-    :attr:`DARTS` and :attr:`BASKETBALL`."""
+    DICE: ClassVar[str] = constants.DICE_DICE
+    """:const:`telegram.constants.DICE_DICE`"""
+    DARTS: ClassVar[str] = constants.DICE_DARTS
+    """:const:`telegram.constants.DICE_DARTS`"""
+    BASKETBALL: ClassVar[str] = constants.DICE_BASKETBALL
+    """:const:`telegram.constants.DICE_BASKETBALL`"""
+    ALL_EMOJI: ClassVar[List[str]] = constants.DICE_ALL_EMOJI
+    """:const:`telegram.constants.DICE_ALL_EMOJI`"""

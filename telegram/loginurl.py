@@ -19,6 +19,7 @@
 # along with this program.  If not, see [http://www.gnu.org/licenses/].
 """This module contains an object that represents a Telegram LoginUrl."""
 from telegram import TelegramObject
+from typing import Any
 
 
 class LoginUrl(TelegramObject):
@@ -28,6 +29,9 @@ class LoginUrl(TelegramObject):
     to log in. Telegram apps support these buttons as of version 5.7.
 
     Sample bot: `@discussbot <https://t.me/dicussbot>`_
+
+    Objects of this class are comparable in terms of equality. Two objects of this class are
+    considered equal, if their :attr:`url` is equal.
 
     Attributes:
         url (:obj:`str`): An HTTP URL to be opened with user authorization data.
@@ -63,7 +67,14 @@ class LoginUrl(TelegramObject):
         `Checking authorization <https://core.telegram.org/widgets/login#checking-authorization>`_
     """
 
-    def __init__(self, url, forward_text=None, bot_username=None, request_write_access=None):
+    def __init__(
+        self,
+        url: str,
+        forward_text: bool = None,
+        bot_username: str = None,
+        request_write_access: bool = None,
+        **kwargs: Any,
+    ):
         # Required
         self.url = url
         # Optional

@@ -21,6 +21,8 @@
 from telegram import Update
 from .handler import Handler
 
+from telegram.utils.types import HandlerArg
+
 
 class PreCheckoutQueryHandler(Handler):
     """Handler class to handle Telegram PreCheckout callback queries.
@@ -35,6 +37,7 @@ class PreCheckoutQueryHandler(Handler):
             the callback function.
         pass_chat_data (:obj:`bool`): Determines whether ``chat_data`` will be passed to
             the callback function.
+        run_async (:obj:`bool`): Determines whether the callback will run asynchronously.
 
     Note:
         :attr:`pass_user_data` and :attr:`pass_chat_data` determine whether a ``dict`` you
@@ -44,6 +47,10 @@ class PreCheckoutQueryHandler(Handler):
 
         Note that this is DEPRECATED, and you should use context based callbacks. See
         https://git.io/fxJuV for more info.
+
+    Warning:
+        When setting ``run_async`` to :obj:`True`, you cannot rely on adding custom
+        attributes to :class:`telegram.ext.CallbackContext`. See its docs for more info.
 
     Args:
         callback (:obj:`callable`): The callback function for this handler. Will be called when
@@ -70,10 +77,12 @@ class PreCheckoutQueryHandler(Handler):
         pass_chat_data (:obj:`bool`, optional): If set to :obj:`True`, a keyword argument called
             ``chat_data`` will be passed to the callback function. Default is :obj:`False`.
             DEPRECATED: Please switch to context based callbacks.
+        run_async (:obj:`bool`): Determines whether the callback will run asynchronously.
+            Defaults to :obj:`False`.
 
     """
 
-    def check_update(self, update):
+    def check_update(self, update: HandlerArg) -> bool:
         """Determines whether an update should be passed to this handlers :attr:`callback`.
 
         Args:
@@ -83,4 +92,4 @@ class PreCheckoutQueryHandler(Handler):
             :obj:`bool`
 
         """
-        return isinstance(update, Update) and update.pre_checkout_query
+        return isinstance(update, Update) and bool(update.pre_checkout_query)

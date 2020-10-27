@@ -62,6 +62,7 @@ The following wonderful people contributed directly or indirectly to this projec
 - `Mischa Krüger <https://github.com/Makman2>`_
 - `naveenvhegde <https://github.com/naveenvhegde>`_
 - `neurrone <https://github.com/neurrone>`_
+- `NikitaPirate <https://github.com/NikitaPirate>`_
 - `njittam <https://github.com/njittam>`_
 - `Noam Meltzer <https://github.com/tsnoam>`_
 - `Oleg Shlyazhko <https://github.com/ollmer>`_
@@ -82,6 +83,7 @@ The following wonderful people contributed directly or indirectly to this projec
 - `sooyhwang <https://github.com/sooyhwang>`_
 - `syntx <https://github.com/syntx>`_
 - `thodnev <https://github.com/thodnev>`_
+- `Timur Kushukov <https://github.com/timqsh>`_
 - `Trainer Jono <https://github.com/Tr-Jono>`_
 - `Valentijn <https://github.com/Faalentijn>`_
 - `voider1 <https://github.com/voider1>`_

@@ -19,15 +19,30 @@
 """This module contains an object that represents a Telegram EncryptedPassportElement."""
 from base64 import b64decode
 
-from telegram import (IdDocumentData, PassportFile, PersonalDetails,
-                      ResidentialAddress, TelegramObject)
+from telegram import (
+    IdDocumentData,
+    PassportFile,
+    PersonalDetails,
+    ResidentialAddress,
+    TelegramObject,
+)
 from telegram.passport.credentials import decrypt_json
+
+from telegram.utils.types import JSONDict
+from typing import List, Any, Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from telegram import Bot, Credentials
 
 
 class EncryptedPassportElement(TelegramObject):
     """
     Contains information about documents or other Telegram Passport elements shared with the bot
     by the user. The data has been automatically decrypted by python-telegram-bot.
+
+    Objects of this class are comparable in terms of equality. Two objects of this class are
+    considered equal, if their :attr:`type`, :attr:`data`, :attr:`phone_number`, :attr:`email`,
+    :attr:`files`, :attr:`front_side`, :attr:`reverse_side` and :attr:`selfie` are equal.
 
     Attributes:
         type (:obj:`str`): Element type. One of "personal_details", "passport", "driver_license",
@@ -101,20 +116,22 @@ class EncryptedPassportElement(TelegramObject):
         :obj:`telegram.PassportData.decrypted_data`.
     """
 
-    def __init__(self,
-                 type,
-                 data=None,
-                 phone_number=None,
-                 email=None,
-                 files=None,
-                 front_side=None,
-                 reverse_side=None,
-                 selfie=None,
-                 translation=None,
-                 hash=None,
-                 bot=None,
-                 credentials=None,
-                 **kwargs):
+    def __init__(
+        self,
+        type: str,
+        data: PersonalDetails = None,
+        phone_number: str = None,
+        email: str = None,
+        files: List[PassportFile] = None,
+        front_side: PassportFile = None,
+        reverse_side: PassportFile = None,
+        selfie: PassportFile = None,
+        translation: List[PassportFile] = None,
+        hash: str = None,
+        bot: 'Bot' = None,
+        credentials: 'Credentials' = None,
+        **kwargs: Any,
+    ):
         # Required
         self.type = type
         # Optionals
@@ -128,17 +145,25 @@ class EncryptedPassportElement(TelegramObject):
         self.translation = translation
         self.hash = hash
 
-        self._id_attrs = (self.type, self.data, self.phone_number, self.email, self.files,
-                          self.front_side, self.reverse_side, self.selfie)
+        self._id_attrs = (
+            self.type,
+            self.data,
+            self.phone_number,
+            self.email,
+            self.files,
+            self.front_side,
+            self.reverse_side,
+            self.selfie,
+        )
 
         self.bot = bot
 
     @classmethod
-    def de_json(cls, data, bot):
+    def de_json(cls, data: Optional[JSONDict], bot: 'Bot') -> Optional['EncryptedPassportElement']:
+        data = cls.parse_data(data)
+
         if not data:
             return None
-
-        data = super().de_json(data, bot)
 
         data['files'] = PassportFile.de_list(data.get('files'), bot) or None
         data['front_side'] = PassportFile.de_json(data.get('front_side'), bot)
@@ -149,11 +174,11 @@ class EncryptedPassportElement(TelegramObject):
         return cls(bot=bot, **data)
 
     @classmethod
-    def de_json_decrypted(cls, data, bot, credentials):
+    def de_json_decrypted(
+        cls, data: Optional[JSONDict], bot: 'Bot', credentials: 'Credentials'
+    ) -> Optional['EncryptedPassportElement']:
         if not data:
             return None
-
-        data = super().de_json(data, bot)
 
         if data['type'] not in ('phone_number', 'email'):
             secure_data = getattr(credentials.secure_data, data['type'])
@@ -161,42 +186,45 @@ class EncryptedPassportElement(TelegramObject):
             if secure_data.data is not None:
                 # If not already decrypted
                 if not isinstance(data['data'], dict):
-                    data['data'] = decrypt_json(b64decode(secure_data.data.secret),
-                                                b64decode(secure_data.data.hash),
-                                                b64decode(data['data']))
+                    data['data'] = decrypt_json(
+                        b64decode(secure_data.data.secret),
+                        b64decode(secure_data.data.hash),
+                        b64decode(data['data']),
+                    )
                 if data['type'] == 'personal_details':
                     data['data'] = PersonalDetails.de_json(data['data'], bot=bot)
-                elif data['type'] in ('passport', 'internal_passport',
-                                      'driver_license', 'identity_card'):
+                elif data['type'] in (
+                    'passport',
+                    'internal_passport',
+                    'driver_license',
+                    'identity_card',
+                ):
                     data['data'] = IdDocumentData.de_json(data['data'], bot=bot)
                 elif data['type'] == 'address':
                     data['data'] = ResidentialAddress.de_json(data['data'], bot=bot)
 
-            data['files'] = PassportFile.de_list_decrypted(data.get('files'), bot,
-                                                           secure_data.files) or None
-            data['front_side'] = PassportFile.de_json_decrypted(data.get('front_side'), bot,
-                                                                secure_data.front_side)
-            data['reverse_side'] = PassportFile.de_json_decrypted(data.get('reverse_side'), bot,
-                                                                  secure_data.reverse_side)
-            data['selfie'] = PassportFile.de_json_decrypted(data.get('selfie'), bot,
-                                                            secure_data.selfie)
-            data['translation'] = PassportFile.de_list_decrypted(data.get('translation'), bot,
-                                                                 secure_data.translation) or None
+            data['files'] = (
+                PassportFile.de_list_decrypted(data.get('files'), bot, secure_data.files) or None
+            )
+            data['front_side'] = PassportFile.de_json_decrypted(
+                data.get('front_side'), bot, secure_data.front_side
+            )
+            data['reverse_side'] = PassportFile.de_json_decrypted(
+                data.get('reverse_side'), bot, secure_data.reverse_side
+            )
+            data['selfie'] = PassportFile.de_json_decrypted(
+                data.get('selfie'), bot, secure_data.selfie
+            )
+            data['translation'] = (
+                PassportFile.de_list_decrypted(
+                    data.get('translation'), bot, secure_data.translation
+                )
+                or None
+            )
 
         return cls(bot=bot, **data)
 
-    @classmethod
-    def de_list(cls, data, bot):
-        if not data:
-            return []
-
-        encrypted_passport_elements = list()
-        for element in data:
-            encrypted_passport_elements.append(cls.de_json(element, bot))
-
-        return encrypted_passport_elements
-
-    def to_dict(self):
+    def to_dict(self) -> JSONDict:
         data = super().to_dict()
 
         if self.files:

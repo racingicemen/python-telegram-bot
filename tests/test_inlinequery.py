@@ -24,8 +24,14 @@ from telegram import User, Location, InlineQuery, Update
 
 @pytest.fixture(scope='class')
 def inline_query(bot):
-    return InlineQuery(TestInlineQuery.id_, TestInlineQuery.from_user, TestInlineQuery.query,
-                       TestInlineQuery.offset, location=TestInlineQuery.location, bot=bot)
+    return InlineQuery(
+        TestInlineQuery.id_,
+        TestInlineQuery.from_user,
+        TestInlineQuery.query,
+        TestInlineQuery.offset,
+        location=TestInlineQuery.location,
+        bot=bot,
+    )
 
 
 class TestInlineQuery:
@@ -41,7 +47,7 @@ class TestInlineQuery:
             'from': self.from_user.to_dict(),
             'query': self.query,
             'offset': self.offset,
-            'location': self.location.to_dict()
+            'location': self.location.to_dict(),
         }
         inline_query_json = InlineQuery.de_json(json_dict, bot)
 
@@ -67,6 +73,15 @@ class TestInlineQuery:
 
         monkeypatch.setattr(inline_query.bot, 'answer_inline_query', test)
         assert inline_query.answer()
+
+    def test_answer_auto_pagination(self, monkeypatch, inline_query):
+        def make_assertion(*args, **kwargs):
+            inline_query_id_matches = args[0] == inline_query.id
+            offset_matches = kwargs.get('current_offset') == inline_query.offset
+            return offset_matches and inline_query_id_matches
+
+        monkeypatch.setattr(inline_query.bot, 'answer_inline_query', make_assertion)
+        assert inline_query.answer(auto_pagination=True)
 
     def test_equality(self):
         a = InlineQuery(self.id_, User(1, '', False), '', '')

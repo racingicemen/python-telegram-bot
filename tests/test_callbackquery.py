@@ -24,12 +24,14 @@ from telegram import CallbackQuery, User, Message, Chat, Audio
 
 @pytest.fixture(scope='class', params=['message', 'inline'])
 def callback_query(bot, request):
-    cbq = CallbackQuery(TestCallbackQuery.id_,
-                        TestCallbackQuery.from_user,
-                        TestCallbackQuery.chat_instance,
-                        data=TestCallbackQuery.data,
-                        game_short_name=TestCallbackQuery.game_short_name,
-                        bot=bot)
+    cbq = CallbackQuery(
+        TestCallbackQuery.id_,
+        TestCallbackQuery.from_user,
+        TestCallbackQuery.chat_instance,
+        data=TestCallbackQuery.data,
+        game_short_name=TestCallbackQuery.game_short_name,
+        bot=bot,
+    )
     if request.param == 'message':
         cbq.message = TestCallbackQuery.message
     else:
@@ -41,27 +43,27 @@ class TestCallbackQuery:
     id_ = 'id'
     from_user = User(1, 'test_user', False)
     chat_instance = 'chat_instance'
-    message = Message(3, User(5, 'bot', False), None, Chat(4, 'private'))
+    message = Message(3, None, Chat(4, 'private'), from_user=User(5, 'bot', False))
     data = 'data'
     inline_message_id = 'inline_message_id'
     game_short_name = 'the_game'
 
     def test_de_json(self, bot):
-        json_dict = {'id': self.id_,
-                     'from': self.from_user.to_dict(),
-                     'chat_instance': self.chat_instance,
-                     'message': self.message.to_dict(),
-                     'data': self.data,
-                     'inline_message_id': self.inline_message_id,
-                     'game_short_name': self.game_short_name,
-                     'default_quote': True}
+        json_dict = {
+            'id': self.id_,
+            'from': self.from_user.to_dict(),
+            'chat_instance': self.chat_instance,
+            'message': self.message.to_dict(),
+            'data': self.data,
+            'inline_message_id': self.inline_message_id,
+            'game_short_name': self.game_short_name,
+        }
         callback_query = CallbackQuery.de_json(json_dict, bot)
 
         assert callback_query.id == self.id_
         assert callback_query.from_user == self.from_user
         assert callback_query.chat_instance == self.chat_instance
         assert callback_query.message == self.message
-        assert callback_query.message.default_quote is True
         assert callback_query.data == self.data
         assert callback_query.inline_message_id == self.inline_message_id
         assert callback_query.game_short_name == self.game_short_name
@@ -84,7 +86,7 @@ class TestCallbackQuery:
         def test(*args, **kwargs):
             return args[0] == callback_query.id
 
-        monkeypatch.setattr(callback_query.bot, 'answerCallbackQuery', test)
+        monkeypatch.setattr(callback_query.bot, 'answer_callback_query', test)
         # TODO: PEP8
         assert callback_query.answer()
 

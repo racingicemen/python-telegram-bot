@@ -19,12 +19,16 @@
 """This module contains the classes that represent Telegram InputTextMessageContent."""
 
 from telegram import InputMessageContent
-from telegram.utils.helpers import DEFAULT_NONE
+from telegram.utils.helpers import DEFAULT_NONE, DefaultValue
+from typing import Any, Union
 
 
 class InputTextMessageContent(InputMessageContent):
     """
     Represents the content of a text message to be sent as the result of an inline query.
+
+    Objects of this class are comparable in terms of equality. Two objects of this class are
+    considered equal, if their :attr:`message_text` is equal.
 
     Attributes:
         message_text (:obj:`str`): Text of the message to be sent, 1-4096 characters after entities
@@ -47,13 +51,17 @@ class InputTextMessageContent(InputMessageContent):
 
     """
 
-    def __init__(self,
-                 message_text,
-                 parse_mode=DEFAULT_NONE,
-                 disable_web_page_preview=DEFAULT_NONE,
-                 **kwargs):
+    def __init__(
+        self,
+        message_text: str,
+        parse_mode: Union[str, DefaultValue] = DEFAULT_NONE,
+        disable_web_page_preview: Union[bool, DefaultValue] = DEFAULT_NONE,
+        **kwargs: Any,
+    ):
         # Required
         self.message_text = message_text
         # Optionals
         self.parse_mode = parse_mode
         self.disable_web_page_preview = disable_web_page_preview
+
+        self._id_attrs = (self.message_text,)

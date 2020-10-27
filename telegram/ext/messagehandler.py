@@ -23,8 +23,16 @@ import warnings
 from telegram.utils.deprecate import TelegramDeprecationWarning
 
 from telegram import Update
-from telegram.ext import Filters
+from telegram.ext import Filters, BaseFilter
 from .handler import Handler
+
+from telegram.utils.types import HandlerArg
+from typing import Callable, TYPE_CHECKING, Any, Optional, Union, TypeVar, Dict
+
+if TYPE_CHECKING:
+    from telegram.ext import CallbackContext, Dispatcher
+
+RT = TypeVar('RT')
 
 
 class MessageHandler(Handler):
@@ -48,6 +56,7 @@ class MessageHandler(Handler):
             Default is :obj:`None`.
         edited_updates (:obj:`bool`): Should "edited" message updates be handled?
             Default is :obj:`None`.
+        run_async (:obj:`bool`): Determines whether the callback will run asynchronously.
 
     Note:
         :attr:`pass_user_data` and :attr:`pass_chat_data` determine whether a ``dict`` you
@@ -57,6 +66,10 @@ class MessageHandler(Handler):
 
         Note that this is DEPRECATED, and you should use context based callbacks. See
         https://git.io/fxJuV for more info.
+
+    Warning:
+        When setting ``run_async`` to :obj:`True`, you cannot rely on adding custom
+        attributes to :class:`telegram.ext.CallbackContext`. See its docs for more info.
 
     Args:
         filters (:class:`telegram.ext.BaseFilter`, optional): A filter inheriting from
@@ -100,61 +113,74 @@ class MessageHandler(Handler):
         edited_updates (:obj:`bool`, optional): Should "edited" message updates be handled? Default
             is :obj:`None`.
             DEPRECATED: Please switch to filters for update filtering.
+        run_async (:obj:`bool`): Determines whether the callback will run asynchronously.
+            Defaults to :obj:`False`.
 
     Raises:
         ValueError
 
     """
 
-    def __init__(self,
-                 filters,
-                 callback,
-                 pass_update_queue=False,
-                 pass_job_queue=False,
-                 pass_user_data=False,
-                 pass_chat_data=False,
-                 message_updates=None,
-                 channel_post_updates=None,
-                 edited_updates=None):
+    def __init__(
+        self,
+        filters: BaseFilter,
+        callback: Callable[[HandlerArg, 'CallbackContext'], RT],
+        pass_update_queue: bool = False,
+        pass_job_queue: bool = False,
+        pass_user_data: bool = False,
+        pass_chat_data: bool = False,
+        message_updates: bool = None,
+        channel_post_updates: bool = None,
+        edited_updates: bool = None,
+        run_async: bool = False,
+    ):
 
         super().__init__(
             callback,
             pass_update_queue=pass_update_queue,
             pass_job_queue=pass_job_queue,
             pass_user_data=pass_user_data,
-            pass_chat_data=pass_chat_data)
+            pass_chat_data=pass_chat_data,
+            run_async=run_async,
+        )
         if message_updates is False and channel_post_updates is False and edited_updates is False:
             raise ValueError(
-                'message_updates, channel_post_updates and edited_updates are all False')
-        self.filters = filters
-        if self.filters is not None:
-            self.filters &= Filters.update
+                'message_updates, channel_post_updates and edited_updates are all False'
+            )
+        if filters is not None:
+            self.filters = Filters.update & filters
         else:
             self.filters = Filters.update
         if message_updates is not None:
-            warnings.warn('message_updates is deprecated. See https://git.io/fxJuV for more info',
-                          TelegramDeprecationWarning,
-                          stacklevel=2)
+            warnings.warn(
+                'message_updates is deprecated. See https://git.io/fxJuV for more info',
+                TelegramDeprecationWarning,
+                stacklevel=2,
+            )
             if message_updates is False:
                 self.filters &= ~Filters.update.message
 
         if channel_post_updates is not None:
-            warnings.warn('channel_post_updates is deprecated. See https://git.io/fxJuV '
-                          'for more info',
-                          TelegramDeprecationWarning,
-                          stacklevel=2)
+            warnings.warn(
+                'channel_post_updates is deprecated. See https://git.io/fxJuV ' 'for more info',
+                TelegramDeprecationWarning,
+                stacklevel=2,
+            )
             if channel_post_updates is False:
                 self.filters &= ~Filters.update.channel_post
 
         if edited_updates is not None:
-            warnings.warn('edited_updates is deprecated. See https://git.io/fxJuV for more info',
-                          TelegramDeprecationWarning,
-                          stacklevel=2)
+            warnings.warn(
+                'edited_updates is deprecated. See https://git.io/fxJuV for more info',
+                TelegramDeprecationWarning,
+                stacklevel=2,
+            )
             if edited_updates is False:
-                self.filters &= ~(Filters.update.edited_message
-                                  | Filters.update.edited_channel_post)
+                self.filters &= ~(
+                    Filters.update.edited_message | Filters.update.edited_channel_post
+                )
 
-    def check_update(self, update):
+    def check_update(self, update: HandlerArg) -> Optional[Union[bool, Dict[str, Any]]]:
         """Determines whether an update should be passed to this handlers :attr:`callback`.
 
         Args:
@@ -166,7 +192,14 @@ class MessageHandler(Handler):
         """
         if isinstance(update, Update) and update.effective_message:
             return self.filters(update)
+        return None
 
-    def collect_additional_context(self, context, update, dispatcher, check_result):
+    def collect_additional_context(
+        self,
+        context: 'CallbackContext',
+        update: HandlerArg,
+        dispatcher: 'Dispatcher',
+        check_result: Optional[Union[bool, Dict[str, Any]]],
+    ) -> None:
         if isinstance(check_result, dict):
             context.update(check_result)

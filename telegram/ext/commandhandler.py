@@ -20,11 +20,19 @@
 import re
 import warnings
 
-from telegram.ext import Filters
+from telegram.ext import Filters, BaseFilter
 from telegram.utils.deprecate import TelegramDeprecationWarning
 
 from telegram import Update, MessageEntity
 from .handler import Handler
+
+from telegram.utils.types import HandlerArg
+from typing import Callable, TYPE_CHECKING, Any, Optional, Union, TypeVar, Dict, List, Tuple
+
+if TYPE_CHECKING:
+    from telegram.ext import CallbackContext, Dispatcher
+
+RT = TypeVar('RT')
 
 
 class CommandHandler(Handler):
@@ -60,6 +68,7 @@ class CommandHandler(Handler):
             the callback function.
         pass_chat_data (:obj:`bool`): Determines whether ``chat_data`` will be passed to
             the callback function.
+        run_async (:obj:`bool`): Determines whether the callback will run asynchronously.
 
     Note:
         :attr:`pass_user_data` and :attr:`pass_chat_data` determine whether a :obj:`dict` you
@@ -69,6 +78,10 @@ class CommandHandler(Handler):
 
         Note that this is DEPRECATED, and you should use context based callbacks. See
         https://git.io/fxJuV for more info.
+
+    Warning:
+        When setting ``run_async`` to :obj:`True`, you cannot rely on adding custom
+        attributes to :class:`telegram.ext.CallbackContext`. See its docs for more info.
 
     Args:
         command (:obj:`str` | List[:obj:`str`]): The command or list of commands this handler
@@ -111,27 +124,34 @@ class CommandHandler(Handler):
         pass_chat_data (:obj:`bool`, optional): If set to :obj:`True`, a keyword argument called
             ``chat_data`` will be passed to the callback function. Default is :obj:`False`.
             DEPRECATED: Please switch to context based callbacks.
+        run_async (:obj:`bool`): Determines whether the callback will run asynchronously.
+            Defaults to :obj:`False`.
 
     Raises:
         ValueError - when command is too long or has illegal chars.
     """
 
-    def __init__(self,
-                 command,
-                 callback,
-                 filters=None,
-                 allow_edited=None,
-                 pass_args=False,
-                 pass_update_queue=False,
-                 pass_job_queue=False,
-                 pass_user_data=False,
-                 pass_chat_data=False):
+    def __init__(
+        self,
+        command: Union[str, List[str]],
+        callback: Callable[[HandlerArg, 'CallbackContext'], RT],
+        filters: BaseFilter = None,
+        allow_edited: bool = None,
+        pass_args: bool = False,
+        pass_update_queue: bool = False,
+        pass_job_queue: bool = False,
+        pass_user_data: bool = False,
+        pass_chat_data: bool = False,
+        run_async: bool = False,
+    ):
         super().__init__(
             callback,
             pass_update_queue=pass_update_queue,
             pass_job_queue=pass_job_queue,
             pass_user_data=pass_user_data,
-            pass_chat_data=pass_chat_data)
+            pass_chat_data=pass_chat_data,
+            run_async=run_async,
+        )
 
         if isinstance(command, str):
             self.command = [command.lower()]
@@ -147,14 +167,18 @@ class CommandHandler(Handler):
             self.filters = Filters.update.messages
 
         if allow_edited is not None:
-            warnings.warn('allow_edited is deprecated. See https://git.io/fxJuV for more info',
-                          TelegramDeprecationWarning,
-                          stacklevel=2)
+            warnings.warn(
+                'allow_edited is deprecated. See https://git.io/fxJuV for more info',
+                TelegramDeprecationWarning,
+                stacklevel=2,
+            )
             if not allow_edited:
                 self.filters &= ~Filters.update.edited_message
         self.pass_args = pass_args
 
-    def check_update(self, update):
+    def check_update(
+        self, update: HandlerArg
+    ) -> Optional[Union[bool, Tuple[List[str], Optional[Union[bool, Dict]]]]]:
         """Determines whether an update should be passed to this handlers :attr:`callback`.
 
         Args:
@@ -167,15 +191,22 @@ class CommandHandler(Handler):
         if isinstance(update, Update) and update.effective_message:
             message = update.effective_message
 
-            if (message.entities and message.entities[0].type == MessageEntity.BOT_COMMAND
-                    and message.entities[0].offset == 0):
-                command = message.text[1:message.entities[0].length]
+            if (
+                message.entities
+                and message.entities[0].type == MessageEntity.BOT_COMMAND
+                and message.entities[0].offset == 0
+                and message.text
+                and message.bot
+            ):
+                command = message.text[1 : message.entities[0].length]
                 args = message.text.split()[1:]
-                command = command.split('@')
-                command.append(message.bot.username)
+                command_parts = command.split('@')
+                command_parts.append(message.bot.username)
 
-                if not (command[0].lower() in self.command
-                        and command[1].lower() == message.bot.username.lower()):
+                if not (
+                    command_parts[0].lower() in self.command
+                    and command_parts[1].lower() == message.bot.username.lower()
+                ):
                     return None
 
                 filter_result = self.filters(update)
@@ -183,17 +214,30 @@ class CommandHandler(Handler):
                     return args, filter_result
                 else:
                     return False
+        return None
 
-    def collect_optional_args(self, dispatcher, update=None, check_result=None):
+    def collect_optional_args(
+        self,
+        dispatcher: 'Dispatcher',
+        update: HandlerArg = None,
+        check_result: Optional[Union[bool, Tuple[List[str], Optional[bool]]]] = None,
+    ) -> Dict[str, Any]:
         optional_args = super().collect_optional_args(dispatcher, update)
-        if self.pass_args:
+        if self.pass_args and isinstance(check_result, tuple):
             optional_args['args'] = check_result[0]
         return optional_args
 
-    def collect_additional_context(self, context, update, dispatcher, check_result):
-        context.args = check_result[0]
-        if isinstance(check_result[1], dict):
-            context.update(check_result[1])
+    def collect_additional_context(
+        self,
+        context: 'CallbackContext',
+        update: HandlerArg,
+        dispatcher: 'Dispatcher',
+        check_result: Optional[Union[bool, Tuple[List[str], Optional[bool]]]],
+    ) -> None:
+        if isinstance(check_result, tuple):
+            context.args = check_result[0]
+            if isinstance(check_result[1], dict):
+                context.update(check_result[1])
 
 
 class PrefixHandler(CommandHandler):
@@ -242,6 +286,7 @@ class PrefixHandler(CommandHandler):
             the callback function.
         pass_chat_data (:obj:`bool`): Determines whether ``chat_data`` will be passed to
             the callback function.
+        run_async (:obj:`bool`): Determines whether the callback will run asynchronously.
 
     Note:
         :attr:`pass_user_data` and :attr:`pass_chat_data` determine whether a ``dict`` you
@@ -251,6 +296,10 @@ class PrefixHandler(CommandHandler):
 
         Note that this is DEPRECATED, and you should use context based callbacks. See
         https://git.io/fxJuV for more info.
+
+    Warning:
+        When setting ``run_async`` to :obj:`True`, you cannot rely on adding custom
+        attributes to :class:`telegram.ext.CallbackContext`. See its docs for more info.
 
     Args:
         prefix (:obj:`str` | List[:obj:`str`]): The prefix(es) that will precede :attr:`command`.
@@ -289,63 +338,76 @@ class PrefixHandler(CommandHandler):
         pass_chat_data (:obj:`bool`, optional): If set to :obj:`True`, a keyword argument called
             ``chat_data`` will be passed to the callback function. Default is :obj:`False`.
             DEPRECATED: Please switch to context based callbacks.
+        run_async (:obj:`bool`): Determines whether the callback will run asynchronously.
+            Defaults to :obj:`False`.
 
     """
 
-    def __init__(self,
-                 prefix,
-                 command,
-                 callback,
-                 filters=None,
-                 pass_args=False,
-                 pass_update_queue=False,
-                 pass_job_queue=False,
-                 pass_user_data=False,
-                 pass_chat_data=False):
+    def __init__(
+        self,
+        prefix: Union[str, List[str]],
+        command: Union[str, List[str]],
+        callback: Callable[[HandlerArg, 'CallbackContext'], RT],
+        filters: BaseFilter = None,
+        pass_args: bool = False,
+        pass_update_queue: bool = False,
+        pass_job_queue: bool = False,
+        pass_user_data: bool = False,
+        pass_chat_data: bool = False,
+        run_async: bool = False,
+    ):
 
-        self._prefix = list()
-        self._command = list()
-        self._commands = list()
+        self._prefix: List[str] = list()
+        self._command: List[str] = list()
+        self._commands: List[str] = list()
 
         super().__init__(
-            'nocommand', callback, filters=filters, allow_edited=None, pass_args=pass_args,
+            'nocommand',
+            callback,
+            filters=filters,
+            allow_edited=None,
+            pass_args=pass_args,
             pass_update_queue=pass_update_queue,
             pass_job_queue=pass_job_queue,
             pass_user_data=pass_user_data,
-            pass_chat_data=pass_chat_data)
+            pass_chat_data=pass_chat_data,
+            run_async=run_async,
+        )
 
-        self.prefix = prefix
-        self.command = command
+        self.prefix = prefix  # type: ignore[assignment]
+        self.command = command  # type: ignore[assignment]
         self._build_commands()
 
     @property
-    def prefix(self):
+    def prefix(self) -> List[str]:
         return self._prefix
 
     @prefix.setter
-    def prefix(self, prefix):
+    def prefix(self, prefix: Union[str, List[str]]) -> None:
         if isinstance(prefix, str):
             self._prefix = [prefix.lower()]
         else:
             self._prefix = prefix
         self._build_commands()
 
-    @property
-    def command(self):
+    @property  # type: ignore[override]
+    def command(self) -> List[str]:  # type: ignore[override]
         return self._command
 
     @command.setter
-    def command(self, command):
+    def command(self, command: Union[str, List[str]]) -> None:
         if isinstance(command, str):
             self._command = [command.lower()]
         else:
             self._command = command
         self._build_commands()
 
-    def _build_commands(self):
+    def _build_commands(self) -> None:
         self._commands = [x.lower() + y.lower() for x in self.prefix for y in self.command]
 
-    def check_update(self, update):
+    def check_update(
+        self, update: HandlerArg
+    ) -> Optional[Union[bool, Tuple[List[str], Optional[Union[bool, Dict]]]]]:
         """Determines whether an update should be passed to this handlers :attr:`callback`.
 
         Args:
@@ -367,8 +429,16 @@ class PrefixHandler(CommandHandler):
                     return text_list[1:], filter_result
                 else:
                     return False
+        return None
 
-    def collect_additional_context(self, context, update, dispatcher, check_result):
-        context.args = check_result[0]
-        if isinstance(check_result[1], dict):
-            context.update(check_result[1])
+    def collect_additional_context(
+        self,
+        context: 'CallbackContext',
+        update: HandlerArg,
+        dispatcher: 'Dispatcher',
+        check_result: Optional[Union[bool, Tuple[List[str], Optional[bool]]]],
+    ) -> None:
+        if isinstance(check_result, tuple):
+            context.args = check_result[0]
+            if isinstance(check_result[1], dict):
+                context.update(check_result[1])

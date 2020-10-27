@@ -23,6 +23,25 @@ import re
 from telegram import Update
 from .handler import Handler
 
+from telegram.utils.types import HandlerArg
+from typing import (
+    Callable,
+    TYPE_CHECKING,
+    Any,
+    Optional,
+    Union,
+    TypeVar,
+    Pattern,
+    Match,
+    Dict,
+    cast,
+)
+
+if TYPE_CHECKING:
+    from telegram.ext import CallbackContext, Dispatcher
+
+RT = TypeVar('RT')
+
 
 class CallbackQueryHandler(Handler):
     """Handler class to handle Telegram callback queries. Optionally based on a regex.
@@ -45,6 +64,7 @@ class CallbackQueryHandler(Handler):
             the callback function.
         pass_chat_data (:obj:`bool`): Determines whether ``chat_data`` will be passed to
             the callback function.
+        run_async (:obj:`bool`): Determines whether the callback will run asynchronously.
 
     Note:
         :attr:`pass_user_data` and :attr:`pass_chat_data` determine whether a ``dict`` you
@@ -54,6 +74,10 @@ class CallbackQueryHandler(Handler):
 
         Note that this is DEPRECATED, and you should use context based callbacks. See
         https://git.io/fxJuV for more info.
+
+    Warning:
+        When setting ``run_async`` to :obj:`True`, you cannot rely on adding custom
+        attributes to :class:`telegram.ext.CallbackContext`. See its docs for more info.
 
     Args:
         callback (:obj:`callable`): The callback function for this handler. Will be called when
@@ -91,24 +115,31 @@ class CallbackQueryHandler(Handler):
         pass_chat_data (:obj:`bool`, optional): If set to :obj:`True`, a keyword argument called
             ``chat_data`` will be passed to the callback function. Default is :obj:`False`.
             DEPRECATED: Please switch to context based callbacks.
+        run_async (:obj:`bool`): Determines whether the callback will run asynchronously.
+            Defaults to :obj:`False`.
 
     """
 
-    def __init__(self,
-                 callback,
-                 pass_update_queue=False,
-                 pass_job_queue=False,
-                 pattern=None,
-                 pass_groups=False,
-                 pass_groupdict=False,
-                 pass_user_data=False,
-                 pass_chat_data=False):
+    def __init__(
+        self,
+        callback: Callable[[HandlerArg, 'CallbackContext'], RT],
+        pass_update_queue: bool = False,
+        pass_job_queue: bool = False,
+        pattern: Union[str, Pattern] = None,
+        pass_groups: bool = False,
+        pass_groupdict: bool = False,
+        pass_user_data: bool = False,
+        pass_chat_data: bool = False,
+        run_async: bool = False,
+    ):
         super().__init__(
             callback,
             pass_update_queue=pass_update_queue,
             pass_job_queue=pass_job_queue,
             pass_user_data=pass_user_data,
-            pass_chat_data=pass_chat_data)
+            pass_chat_data=pass_chat_data,
+            run_async=run_async,
+        )
 
         if isinstance(pattern, str):
             pattern = re.compile(pattern)
@@ -117,7 +148,7 @@ class CallbackQueryHandler(Handler):
         self.pass_groups = pass_groups
         self.pass_groupdict = pass_groupdict
 
-    def check_update(self, update):
+    def check_update(self, update: HandlerArg) -> Optional[Union[bool, object]]:
         """Determines whether an update should be passed to this handlers :attr:`callback`.
 
         Args:
@@ -135,16 +166,30 @@ class CallbackQueryHandler(Handler):
                         return match
             else:
                 return True
+        return None
 
-    def collect_optional_args(self, dispatcher, update=None, check_result=None):
+    def collect_optional_args(
+        self,
+        dispatcher: 'Dispatcher',
+        update: HandlerArg = None,
+        check_result: Union[bool, Match] = None,
+    ) -> Dict[str, Any]:
         optional_args = super().collect_optional_args(dispatcher, update, check_result)
         if self.pattern:
+            check_result = cast(Match, check_result)
             if self.pass_groups:
                 optional_args['groups'] = check_result.groups()
             if self.pass_groupdict:
                 optional_args['groupdict'] = check_result.groupdict()
         return optional_args
 
-    def collect_additional_context(self, context, update, dispatcher, check_result):
+    def collect_additional_context(
+        self,
+        context: 'CallbackContext',
+        update: HandlerArg,
+        dispatcher: 'Dispatcher',
+        check_result: Union[bool, Match],
+    ) -> None:
         if self.pattern:
+            check_result = cast(Match, check_result)
             context.matches = [check_result]
